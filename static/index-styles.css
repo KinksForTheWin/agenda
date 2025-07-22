@@ -1,0 +1,644 @@
+/* General Body Styles */
+body {
+    font-family: 'MS Sans Serif', 'Arial', sans-serif; /* Típica de Windows 9x */
+    margin: 0;
+    padding: 20px;
+    background-color: #008080; /* Fondo clásico de escritorio de Windows */
+    color: #000000; /* Texto negro para contraste */
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    transition: margin-right 0.3s ease-out;
+    -webkit-font-smoothing: none; /* Desactiva el suavizado de fuente para un look más pixelado */
+    font-size: 14px; /* Tamaño de fuente común en esas interfaces */
+}
+
+h1 {
+    color: #000000;
+    text-align: center;
+    margin-bottom: 30px;
+    font-size: 2em; /* Un poco más grande, pero sin exagerar */
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF; /* Sombra sutil para efecto 3D */
+}
+
+/* Input Section */
+.input-section {
+    background-color: #C0C0C0; /* Gris de ventana estándar */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px; /* Reducimos el gap para un aspecto más compacto */
+    justify-content: center;
+    align-items: center;
+    transition: margin-right 0.3s ease-out;
+    border-radius: 8px; /* Redondeado */
+}
+
+.input-section label {
+    font-weight: normal; /* No negrita, estilo más plano */
+    color: #000000;
+    white-space: nowrap;
+    margin-right: 5px; /* Pequeño espacio para separar */
+}
+
+.input-section input[type="text"],
+.input-section input[type="number"],
+.input-section select {
+    padding: 3px 5px; /* Relleno menor para campos de entrada */
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    font-size: 1em;
+    color: #000000;
+    flex-grow: 1;
+    min-width: 120px; /* Reducimos el min-width */
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    border-radius: 4px; /* Redondeado */
+}
+
+.input-section button {
+    background-color: #C0C0C0; /* Gris de botón estándar */
+    color: #000000;
+    padding: 5px 15px; /* Relleno típico de botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: normal;
+    transition: none; /* Desactivar transiciones para inmediatez */
+    box-shadow: none; /* Sin sombras suaves */
+    border-radius: 5px; /* Redondeado */
+}
+
+.input-section button:hover {
+    background-color: #D4D0C8; /* Ligeramente más claro al pasar el ratón */
+    transform: none; /* Sin transformaciones */
+}
+
+.input-section button:active {
+    border-top: 2px solid #808080; /* Efecto de presionado */
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0; /* Más oscuro al presionar */
+}
+
+.input-section button:disabled {
+    background-color: #C0C0C0;
+    color: #808080; /* Gris para texto deshabilitado */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Calendar Container */
+#calendario-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Min-width un poco más pequeño */
+    gap: 15px; /* Espacio reducido */
+    width: 100%;
+    max-width: 1200px;
+    margin-top: 15px;
+    padding: 0; /* Sin padding en el contenedor */
+    transition: margin-right 0.3s ease-out;
+}
+
+.calendario-mes {
+    background-color: #C0C0C0; /* Fondo gris para todo el bloque */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    overflow: hidden; /* Importante para que los bordes redondeados se apliquen bien al contenido */
+    width: 100%;
+    border-radius: 8px; /* Redondeado aplicado a todo el bloque gris/azul */
+    position: relative;
+}
+
+/* Estilo para la tabla dentro del calendario */
+.calendario-mes table {
+    width: 100%;
+    border-collapse: collapse; /* Elimina el espacio entre celdas */
+    margin: 0; /* Elimina cualquier margen por defecto de la tabla */
+    padding: 0; /* Elimina cualquier padding por defecto de la tabla */
+    /* El caption se posiciona en relación a esta tabla si es su primer hijo */
+}
+
+.calendario-mes caption {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #FFFFFF; /* Texto blanco para el título del mes */
+    background-color: #000080; /* Barra de título azul */
+    text-align: center;
+    line-height: 1.2;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    
+    /* --- CAMBIOS PARA FUSIONAR COMO UN SOLO BLOQUE --- */
+    /* Revertimos los márgenes y ancho que podrían haber causado el problema visual */
+    width: auto; /* Dejar que el navegador maneje el ancho del caption */
+    margin: 0; /* Elimina cualquier margen predeterminado */
+    
+    /* Aseguramos que el caption no tenga sus propios radios */
+    border-radius: 0; 
+    
+    /* Posicionamos el caption en la parte superior del div principal para que use el border-radius del padre */
+    position: absolute; /* Usamos absolute para sacarlo del flujo normal */
+    top: 0;
+    left: 0;
+    right: 0;
+    /* Necesitamos un z-index para asegurarnos de que el caption esté por encima del resto del contenido */
+    z-index: 1; 
+    
+    /* Establecemos el box-sizing para que el padding no afecte el width total */
+    box-sizing: border-box;
+}
+
+/* Ajustamos el padding-top del div principal para dar espacio al caption absoluto */
+.calendario-mes {
+    padding-top: 40px; /* Ajusta este valor según la altura de tu caption + un poco de buffer */
+    /* Asegúrate de que este padding no se sume al padding del caption en sí, si es que lo tienes */
+}
+
+
+.calendario-mes caption::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px; /* Alineamos con el borde interno izquierdo del .calendario-mes */
+    width: calc(100% - 4px); /* Resta los 2px de bisel de cada lado */
+    height: 3px;
+    background: linear-gradient(to right, #0000A0, #000080); /* Degradado sutil */
+    border-radius: 0; /* Aseguramos que no tenga sus propios radios */
+}
+
+.calendario-mes th,
+.calendario-mes td {
+    text-align: center;
+    padding: 5px 0; /* Relleno más pequeño para las celdas */
+    border: 1px solid #808080; /* Bordes internos más oscuros */
+    box-sizing: border-box; /* Para que el borde no aumente el tamaño de la celda */
+}
+
+.calendario-mes th {
+    background-color: #C0C0C0; /* Fondo gris para encabezados */
+    color: #000000;
+    font-weight: normal;
+    font-size: 0.9em;
+    border-bottom: 1px solid #808080; /* Borde inferior más marcado */
+}
+
+/* Day Cell Styles */
+.calendario-mes td {
+    cursor: pointer;
+    transition: none; /* Sin transiciones suaves */
+    font-size: 1em;
+    font-weight: normal;
+    background-color: #FFFFFF; /* Fondo blanco para los días por defecto */
+    color: #000000;
+    border-radius: 3px; /* Ligero redondeado para las celdas */
+}
+
+/* Estilo para los días "vacíos" o fuera del mes */
+.calendario-mes td:empty {
+    background-color: #C0C0C0; /* Gris de la interfaz para los espacios vacíos */
+    cursor: default; /* Cursor por defecto, no de puntero */
+    border: none; /* Elimina completamente el borde de las celdas vacías */
+}
+
+/* Specific Day Status Colors */
+.calendario-mes .dia-disponible {
+    background-color: #90EE90; /* Verde claro para disponible (LightGreen) */
+    color: #006400; /* Verde oscuro para texto (DarkGreen) */
+    font-weight: bold;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-disponible:hover {
+    background-color: #7CFC00; /* Verde más brillante al pasar el ratón (LawnGreen) */
+    transform: none; /* Sin transformación */
+}
+
+.calendario-mes .dia-disponible:active {
+    background-color: #6B8E23; /* Verde oliva al presionar */
+    border-top: 1px solid #FFFFFF;
+    border-left: 1px solid #FFFFFF;
+    border-right: 1px solid #808080;
+    border-bottom: 1px solid #808080;
+}
+
+.calendario-mes .dia-sin-disponibilidad {
+    background-color: #FF6347; /* Rojo tomate para no disponible */
+    color: #8B0000; /* Rojo oscuro para el texto (DarkRed) */
+    cursor: not-allowed;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-pasado {
+    background-color: #D4D0C8; /* Un gris ligeramente diferente para días pasados */
+    color: #A0A0A4;
+    cursor: not-allowed;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-no-disponible {
+    background-color: #D4D0C8;
+    color: #808080;
+    cursor: not-allowed;
+    font-style: normal; /* Sin cursiva */
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-actual {
+    border: 2px solid #0000FF; /* Borde azul para el día actual */
+    background-color: #ADD8E6; /* Azul claro para el fondo del día actual */
+    font-weight: bold;
+    border-radius: 3px; /* También redondeado */
+}
+
+/* Admin Panel Link */
+p a {
+    color: #000080; /* Azul estándar de enlaces */
+    text-decoration: underline; /* Subrayado por defecto */
+    font-weight: normal;
+    transition: none;
+}
+
+p a:hover {
+    color: #0000FF; /* Azul más claro al pasar el ratón */
+    text-decoration: underline;
+}
+
+/* Toast Messages */
+#toast {
+    visibility: hidden;
+    min-width: 250px;
+    margin-left: -125px;
+    background-color: #000000; /* Fondo negro para mensajes */
+    color: #FFFFFF;
+    text-align: center;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 10px;
+    position: fixed;
+    z-index: 1000;
+    left: 50%;
+    bottom: 30px;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s, visibility 0.3s;
+    transform: translateX(-50%);
+    box-shadow: none; /* Sin sombras suaves */
+    border-radius: 5px; /* Redondeado */
+}
+
+#toast.show {
+    visibility: visible;
+    opacity: 1;
+}
+
+#toast.success { background-color: #008000; } /* Verde para éxito */
+#toast.error { background-color: #FF0000; } /* Rojo para error */
+#toast.info { background-color: #0000FF; } /* Azul para info */
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(128,128,128,0.7); /* Fondo gris semitransparente */
+}
+
+.modal-content {
+    background-color: #C0C0C0;
+    margin: 10% auto; /* Ajustamos el margen para que aparezca más arriba */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    width: 80%;
+    max-width: 400px; /* Reducimos el tamaño máximo */
+    position: relative;
+    box-shadow: none;
+    animation-name: animatetop;
+    animation-duration: 0.4s;
+    font-size: 14px;
+    border-radius: 8px; /* Redondeado */
+}
+
+@keyframes animatetop {
+    from {top: -300px; opacity: 0}
+    to {top: 10%; opacity: 1}
+}
+
+.close-button {
+    color: #000000;
+    float: right;
+    font-size: 20px; /* Tamaño más pequeño para la 'x' */
+    font-weight: bold;
+    cursor: pointer;
+    background-color: #C0C0C0;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px;
+    line-height: 1; /* Para que la 'x' se vea bien */
+    border-radius: 3px; /* Redondeado */
+}
+
+.close-button:hover,
+.close-button:focus {
+    color: #000000;
+    background-color: #D4D0C8;
+    text-decoration: none;
+}
+
+.modal-content input[type="text"] {
+    width: calc(100% - 10px); /* Ajuste por padding y bordes */
+    padding: 3px 5px;
+    margin-top: 10px;
+    margin-bottom: 15px;
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    box-sizing: border-box;
+    border-radius: 4px; /* Redondeado */
+}
+
+.modal-content button {
+    background-color: #C0C0C0;
+    color: #000000;
+    padding: 5px 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 14px;
+    transition: none;
+    box-shadow: none;
+    border-radius: 5px; /* Redondeado */
+}
+
+.modal-content button:hover {
+    background-color: #D4D0C8;
+}
+
+.modal-content button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+/* Sidebar Panel Styles */
+.sidebar-panel {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100%;
+    background-color: #C0C0C0;
+    border-left: 2px solid #FFFFFF;
+    border-top: 2px solid #FFFFFF; /* Borde superior para efecto de panel */
+    border-bottom: 2px solid #808080; /* Borde inferior */
+    box-shadow: -4px 0 15px rgba(0, 0, 0, 0.1); /* Podría dejarse o quitarse */
+    z-index: 99;
+    transition: right 0.3s ease-out;
+    padding: 15px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-top-left-radius: 8px; /* Redondeado */
+    border-bottom-left-radius: 8px; /* Redondeado */
+}
+
+.sidebar-panel.open {
+    right: 0;
+}
+
+.sidebar-panel .panel-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 15px; /* Menos margen */
+}
+
+.sidebar-panel .close-button {
+    font-size: 20px;
+    cursor: pointer;
+    color: #000000;
+    background-color: #C0C0C0;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px;
+    line-height: 1;
+    border-radius: 3px; /* Redondeado */
+}
+
+.sidebar-panel .close-button:hover {
+    color: #000000;
+    background-color: #D4D0C8;
+}
+.sidebar-panel .close-button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+
+.sidebar-panel h3 {
+    color: #000000;
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF;
+}
+
+#panel-horarios-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px; /* Espacio mínimo entre botones */
+    justify-content: center;
+}
+
+.sidebar-panel .btn-hora {
+    background-color: #C0C0C0;
+    color: #000000;
+    padding: 5px 10px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: none;
+    flex: 1 1 auto;
+    min-width: 80px;
+    max-width: calc(50% - 5px); /* Dos columnas, pero ajustado */
+    box-sizing: border-box;
+    border-radius: 5px; /* Redondeado */
+}
+
+.sidebar-panel .btn-hora:hover {
+    background-color: #D4D0C8;
+}
+
+.sidebar-panel .btn-hora:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+.sidebar-panel .btn-hora-reservada {
+    background-color: #FF6347 !important; /* Rojo tomate para ocupado - !important para asegurar prioridad */
+    color: #8B0000 !important; /* Texto rojo oscuro - !important para asegurar prioridad */
+    cursor: not-allowed;
+    border-top: 2px solid #D4D0C8; /* Un efecto de hundido o menos contraste */
+    border-left: 2px solid #D4D0C8;
+    border-right: 2px solid #A0A0A0;
+    border-bottom: 2px solid #A0A0A0;
+    opacity: 0.8; /* Ligeramente transparente para indicar inactividad */
+}
+
+.sidebar-panel .btn-hora-reservada:hover {
+    background-color: #FF4500 !important; /* Naranja rojizo para un hover sutil */
+    transform: none;
+}
+
+.sidebar-panel .btn-hora-pasada {
+    background-color: #D4D0C8; /* Gris similar a días pasados */
+    color: #A0A0A4; /* Texto gris claro */
+    cursor: not-allowed;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    opacity: 0.6; /* Más transparente para indicar que no es relevante */
+}
+
+.sidebar-panel .btn-hora-pasada:hover {
+    background-color: #D4D0C8; /* No cambia al pasar el ratón */
+    transform: none;
+}
+
+.sidebar-panel .btn-hora:disabled {
+    /* Ensure disabled state is handled by specific classes, not general .btn-hora:disabled */
+    /* This overrides the general disabled style if it conflicts with btn-hora-reservada/pasada */
+    background-color: inherit; /* Inherit the background from the specific class */
+    color: inherit; /* Inherit the color from the specific class */
+    border-color: inherit; /* Inherit border colors */
+    cursor: not-allowed;
+    opacity: 1; /* Reset opacity if general disabled rule sets it */
+}
+/* --- FIN DE NUEVOS ESTILOS --- */
+
+
+.sidebar-panel p {
+    text-align: center;
+    color: #000000;
+    font-style: normal;
+    margin-top: 15px;
+}
+
+/* Adjust main content when panel is open */
+body.panel-open #calendario-container {
+    margin-right: 320px;
+}
+body.panel-open .input-section,
+body.panel-open #info-tiempo,
+body.panel-open h1,
+body.panel-open p:last-child {
+    margin-right: 320px;
+}
+body.panel-open #calendario-container,
+body.panel-open .input-section,
+body.panel-open #info-tiempo,
+body.panel-open h1,
+body.panel-open p:last-child {
+    transition: margin-right 0.3s ease-out;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    body {
+        padding: 10px; /* Reducir padding en móviles */
+    }
+    h1 {
+        font-size: 1.8em;
+    }
+    .input-section {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px;
+    }
+    .input-section input,
+    .input-section select,
+    .input-section button {
+        width: 100%;
+        min-width: unset;
+    }
+    #calendario-container {
+        grid-template-columns: 1fr;
+        gap: 10px; /* Reducir aún más el gap */
+    }
+    .modal-content {
+        width: 90%;
+        margin: 5% auto; /* Subir más el modal en móviles */
+    }
+    .sidebar-panel {
+        width: 100%;
+        right: -100%;
+        bottom: -100%;
+        height: 50%;
+        border-top-left-radius: 8px; /* Redondeado en móvil */
+        border-top-right-radius: 8px; /* Redondeado en móvil */
+        border-left: none; /* Eliminar borde lateral en móvil */
+        border-top: 2px solid #FFFFFF; /* Solo borde superior */
+        border-right: 2px solid #808080;
+        border-bottom: 2px solid #808080;
+    }
+    .sidebar-panel.open {
+        right: 0;
+        bottom: 0;
+    }
+    body.panel-open #calendario-container,
+    body.panel-open .input-section,
+    body.panel-open #info-tiempo,
+    body.panel-open h1,
+    body.panel-open p:last-child {
+        margin-right: 0;
+    }
+}

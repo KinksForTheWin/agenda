@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Configuración de Reservas</title> {# Título de la pestaña también actualizado #}
+    <link rel="stylesheet" href="/static/admin-styles.css" />
+</head>
+<body>
+    <div class="container">
+        <h1>Configuración</h1> {# Título principal cambiado a solo "Configuración" #}
+
+        {% if mensaje %}
+        <div class="message">{{ mensaje }}</div>
+        {% endif %}
+
+        <form action="/reservas/{{ id_negocio }}/admin/config" method="post" id="admin-form">
+            {# El recuadro "Configuración General" ha sido eliminado #}
+            {# El campo max_calendarios ahora es oculto y lo maneja JS #}
+            <input type="hidden" id="max_calendarios" name="max_calendarios" value="{{ max_calendarios }}" />
+
+            <div id="calendarios-dinamicos">
+                {# Los calendarios serán añadidos dinámicamente aquí por JavaScript #}
+            </div>
+
+            <button type="button" id="add-calendar-button" class="add-calendar-button">
+                Agregar Calendario {# Emoji eliminado #}
+            </button>
+
+            <button type="submit">Guardar Configuración</button>
+        </form>
+    </div>
+
+    <div class="footer-button-container">
+        <a href="/reservas/{{ id_negocio }}" class="back-button">
+            Volver al Calendario de Reservas {# Emoji eliminado #}
+        </a>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const maxCalendariosInput = document.getElementById("max_calendarios");
+            const calendariosContainer = document.getElementById("calendarios-dinamicos");
+            const addCalendarButton = document.getElementById("add-calendar-button");
+            const diasSemanaNombres = {{ dias_semana_nombres | tojson }};
+            const defaultFechaMaxima = "{{ default_fecha_maxima }}";
+            const initialCalendarsConfig = {{ calendarios_config | tojson }};
+
+            let calendarCounter = 0; // Para llevar la cuenta de IDs únicos para nuevos calendarios
+
+            // Función para generar el HTML de un bloque de calendario
+            function generarCampoCalendario(index, calData = {}) {
+                // Usar calData proporcionado o valores por defecto
+                const horarioInicio = calData.horario_inicio !== undefined ? calData.horario_inicio : 9;
+                const horarioFin = calData.horario_fin !== undefined ? calData.horario_fin : 18;
+                const duracionTurnoMin = calData.duracion_turno_min !== undefined ? calData.duracion_turno_min : 30;
+                const diasHabiles = calData.dias_habiles !== undefined ? calData.dias_habiles : [0, 1, 2, 3, 4];
+                const fechaMaximaReserva = calData.fecha_maxima_reserva !== undefined && calData.fecha_maxima_reserva !== null ? calData.fecha_maxima_reserva : defaultFechaMaxima;
+                const nombreCalendario = calData.nombre !== undefined && calData.nombre !== null ? calData.nombre : `Nuevo Calendario`; // Nombre por defecto "Nuevo Calendario"
+
+                let checkboxesHtml = '';
+                diasSemanaNombres.forEach((nombre_dia, num_dia) => {
+                    const checked = diasHabiles.includes(num_dia) ? 'checked' : '';
+                    checkboxesHtml += `
+                        <label>
+                            <input type="checkbox" name="dias_habiles_${index}" value="${num_dia}" ${checked} />
+                            ${nombre_dia}
+                        </label>
+                    `;
+                });
+
+                return `
+                    <div class="form-section calendar-config" data-calendar-id="${index}">
+                        <button type="button" class="remove-calendar-button">&times;</button>
+                        <h3>Configuración Calendario <span class="calendar-number">${index}</span></h3>
+                        <div class="form-row">
+                            <div>
+                                <label for="nombre_calendario_${index}">Nombre del Calendario:</label>
+                                <input type="text" id="nombre_calendario_${index}" name="nombre_calendario_${index}" value="${nombreCalendario}" placeholder="Ej: Calendario de Citas" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="horario_inicio_${index}">Horario Inicio (horas):</label>
+                                <input type="number" id="horario_inicio_${index}" name="horario_inicio_${index}" value="${horarioInicio}" min="0" max="23" required />
+                            </div>
+                            <div>
+                                <label for="horario_fin_${index}">Horario Fin (horas):</label>
+                                <input type="number" id="horario_fin_${index}" name="horario_fin_${index}" value="${horarioFin}" min="0" max="23" required />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="duracion_turno_min_${index}">Duración del Turno (minutos):</label>
+                                <input type="number" id="duracion_turno_min_${index}" name="duracion_turno_min_${index}" value="${duracionTurnoMin}" min="5" required />
+                            </div>
+                            <div>
+                                <label for="fecha_maxima_reserva_${index}">Fecha Máxima de Reserva:</label>
+                                <input type="date" id="fecha_maxima_reserva_${index}" name="fecha_maxima_reserva_${index}" value="${fechaMaximaReserva}" />
+                            </div>
+                        </div>
+                        <label>Días Hábiles:</label>
+                        <div class="checkbox-group">
+                            ${checkboxesHtml}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Función para actualizar el campo oculto max_calendarios y re-numerar calendarios
+            function updateCalendarCount() {
+                const currentCalendars = calendariosContainer.children.length;
+                maxCalendariosInput.value = currentCalendars; // Actualiza el campo oculto
+
+                // Re-numerar los calendarios visibles y sus atributos
+                Array.from(calendariosContainer.children).forEach((calendarDiv, i) => {
+                    const newIndex = i + 1;
+                    calendarDiv.querySelector('.calendar-number').textContent = newIndex;
+                    // Actualizar nombres e IDs de los inputs para reflejar el nuevo índice
+                    calendarDiv.querySelectorAll('[name]').forEach(input => {
+                        const oldName = input.name;
+                        const newName = oldName.replace(/_\d+$/, `_${newIndex}`);
+                        input.name = newName;
+                    });
+                    calendarDiv.querySelectorAll('[id]').forEach(input => {
+                        const oldId = input.id;
+                        const newId = oldId.replace(/_\d+$/, `_${newIndex}`);
+                        input.id = newId;
+                    });
+                    calendarDiv.dataset.calendarId = newIndex; // Actualizar atributo de datos
+                });
+            }
+
+            // Población inicial de calendarios desde los datos del servidor
+            let initialMaxId = 0;
+            for (const key in initialCalendarsConfig) {
+                if (initialCalendarsConfig.hasOwnProperty(key)) {
+                    const calConfig = initialCalendarsConfig[key];
+                    // Asegurarse de que calendarCounter comience desde el ID más alto existente
+                    initialMaxId = Math.max(initialMaxId, parseInt(key));
+                    const newDiv = document.createElement("div");
+                    newDiv.innerHTML = generarCampoCalendario(parseInt(key), calConfig);
+                    calendariosContainer.appendChild(newDiv.firstElementChild);
+                }
+            }
+            calendarCounter = initialMaxId; // Establecer el contador al máximo ID encontrado
+
+            if (Object.keys(initialCalendarsConfig).length === 0) {
+                    // Si no hay calendarios iniciales, añadir uno por defecto
+                calendarCounter = 1;
+                const newDiv = document.createElement("div");
+                newDiv.innerHTML = generarCampoCalendario(calendarCounter);
+                calendariosContainer.appendChild(newDiv.firstElementChild);
+            }
+            updateCalendarCount(); // Actualización inicial del conteo y numeración
+
+            // Añadir nuevo calendario
+            addCalendarButton.addEventListener("click", () => {
+                calendarCounter++;
+                const newDiv = document.createElement("div");
+                newDiv.innerHTML = generarCampoCalendario(calendarCounter);
+                calendariosContainer.appendChild(newDiv.firstElementChild);
+                updateCalendarCount();
+            });
+
+            // Eliminar calendario (delegación de eventos)
+            calendariosContainer.addEventListener("click", (event) => {
+                if (event.target.classList.contains("remove-calendar-button")) {
+                    const calendarToRemove = event.target.closest(".calendar-config");
+                    if (calendarToRemove) {
+                        calendarToRemove.remove();
+                        updateCalendarCount();
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+/* Estilos específicos para el panel de administración, siguiendo el tema Windows 9x */
+
+/* Contenedor principal del panel */
+.container {
+    max-width: 800px;
+    margin: 20px auto; /* Centrar y darle un margen superior e inferior */
+    background-color: #C0C0C0; /* Gris de ventana estándar */
+    padding: 20px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: none; /* Quitamos sombras suaves */
+    flex-grow: 1;
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    border-radius: 8px; /* ✨ Redondeado para el contenedor principal */
+}
+
+/* Títulos */
+h1 {
+    color: #000000;
+    text-align: center;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF; /* Sombra sutil para efecto 3D */
+    margin-bottom: 20px;
+    font-size: 2.2em; /* Un poco más grande para el título principal */
+    padding-bottom: 10px;
+    /* border-bottom: 1px dashed #808080; */ /* ❌ Eliminada la barra separadora del título */
+}
+
+/* El h2 para cada calendario individual se mantiene, como antes. */
+h3 { /* Cambiado de h2 a h3 para los títulos de calendario, si quieres diferenciarlos de otros posibles h2 */
+    font-size: 1.5em;
+    margin-top: 25px;
+    margin-bottom: 15px;
+    color: #000080; /* Azul como las barras de título secundarias */
+    text-shadow: 1px 1px 0 #ADD8E6; /* Sombra azul claro */
+}
+
+
+/* Secciones de formulario (ahora se aplican a cada bloque de calendario dinámico) */
+.form-section {
+    margin-bottom: 30px;
+    background-color: #E0E0E0; /* Fondo ligeramente diferente para destacar el bloque de calendario */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    border-radius: 6px; /* ✨ Redondeado para las secciones de formulario */
+    box-shadow: none;
+    box-sizing: border-box;
+}
+
+/* Fondo verde al cuerpo */
+body {
+    background-color: #008080; /* Fondo clásico de escritorio de Windows */
+}
+
+
+/* Etiquetas de formulario */
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: normal; /* No negrita por defecto */
+    color: #000000;
+}
+
+/* Campos de entrada de texto, número y select */
+input type="text"],
+input type="number"],
+input type="date"],
+select {
+    width: calc(100% - 10px); /* Ajuste por padding y bordes */
+    padding: 3px 5px; /* Relleno menor para campos de entrada */
+    margin-bottom: 10px;
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    font-size: 1em;
+    color: #000000;
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    -webkit-appearance: none; /* Elimina estilos por defecto de algunos navegadores */
+    -moz-appearance: none;
+    appearance: none;
+    border-radius: 4px; /* ✨ Redondeado para los campos de entrada */
+}
+
+/* Estilos para grupos de checkboxes */
+.checkbox-group label {
+    display: inline-block;
+    margin-right: 15px;
+    font-weight: normal;
+}
+
+/* Botones: Agregar Calendario, Guardar, Volver (todos con el mismo estilo gris) */
+button, .back-button {
+    background-color: #C0C0C0; /* Gris de botón estándar para todos */
+    color: #000000;
+    padding: 5px 15px; /* Relleno típico de botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: normal;
+    width: auto; /* No ocupan todo el ancho */
+    margin: 10px 5px; /* Espacio entre ellos */
+    box-shadow: none; /* Sin sombras suaves */
+    text-decoration: none; /* Para el enlace que parece botón */
+    display: inline-block; /* Para que 'width: auto' funcione en <a> y se pongan en línea */
+    text-align: center;
+    box-sizing: border-box;
+    white-space: nowrap; /* Evita que el texto del botón se rompa */
+    border-radius: 5px; /* ✨ Redondeado para los botones */
+}
+
+button:hover, .back-button:hover {
+    background-color: #D4D0C8; /* Ligeramente más claro al pasar el ratón */
+    transform: none; /* Sin transformaciones */
+}
+
+button:active, .back-button:active {
+    border-top: 2px solid #808080; /* Efecto de presionado */
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0; /* Más oscuro al presionar */
+}
+
+/* Mensajes (éxito/error) */
+.message {
+    text-align: center;
+    margin-top: 20px;
+    padding: 10px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    background-color: #E0E0E0; /* Un gris claro para el fondo del mensaje */
+    color: #000000; /* Texto negro */
+    font-weight: bold;
+    box-shadow: none;
+    border-radius: 5px; /* ✨ Redondeado para los mensajes */
+}
+
+/* Contenedor dinámico de calendarios */
+#calendarios-dinamicos {
+    margin-top: 20px;
+}
+
+/* Configuración de calendario individual (añadido dinámicamente) */
+.calendar-config {
+    margin-bottom: 20px;
+    position: relative;
+    /* La clase .form-section ya proporciona los bordes y el fondo deseados, y ahora el redondeo */
+}
+
+.calendar-config h3 { /* Aplicamos el estilo de título de calendario al h3 */
+    margin-top: 0;
+    color: #000080; /* Azul para el título del calendario */
+    display: inline-block;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #ADD8E6;
+}
+
+.calendar-config .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.calendar-config .form-row > div {
+    flex: 1;
+    min-width: 200px;
+}
+
+/* Botón de eliminar calendario (la cruz) */
+.remove-calendar-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    color: #000000; /* Color de la 'x' */
+    font-size: 20px; /* Tamaño de la 'x' */
+    font-weight: bold;
+    cursor: pointer;
+    background-color: #C0C0C0; /* Color de fondo del botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px; /* Relleno para que la 'x' no esté pegada a los bordes */
+    line-height: 1; /* Asegura que la 'x' esté centrada verticalmente */
+    width: auto; /* Ajuste automático según el contenido */
+    height: auto;
+    min-width: unset; /* Anula el min-width global de los botones */
+    margin: 0; /* Anula los márgenes globales de los botones */
+    border-radius: 3px; /* ✨ Redondeado para el botón de eliminar */
+}
+
+.remove-calendar-button:hover {
+    background-color: #D4D0C8;
+}
+
+.remove-calendar-button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+/* Contenedor de botones de pie de página (para centrar los botones "Guardar" y "Volver") */
+.footer-button-container {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    /* border-top: 2px dotted #808080; */ /* ❌ Eliminada la barra superior del pie de página */
+}
+
+/* Ajustes responsivos para pantallas pequeñas */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+        margin: 10px auto;
+    }
+
+    h1 {
+        font-size: 1.8em;
+    }
+
+    h3 {
+        font-size: 1.3em;
+    }
+
+    .form-section {
+        padding: 10px;
+    }
+
+    input type="text"],
+    input type="number"],
+    input type="date"],
+    select {
+        width: 100%; /* Asegura que ocupen todo el ancho disponible */
+        box-sizing: border-box;
+    }
+
+    button,
+    .back-button {
+        width: auto; /* Permite que el ancho se ajuste al contenido */
+        display: inline-block; /* Mantenerlos en línea para que se vean como grupo */
+        margin: 5px; /* Ajuste el margen para móviles */
+    }
+
+    .calendar-config .form-row {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .calendar-config .form-row > div {
+        min-width: unset;
+        width: 100%;
+    }
+
+    .remove-calendar-button {
+        width: 20px; /* Tamaño más pequeño en móvil */
+        height: 20px;
+        font-size: 1em;
+    }
+}

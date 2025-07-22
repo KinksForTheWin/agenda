@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Sistema de Reservas</title>
+    <link rel="stylesheet" href="/static/index-styles.css" />
+    <script src="/static/app.js" defer></script>
+    <style>
+        /* Aquí podrías tener estilos CSS específicos que no quieras en style.css */
+    </style>
+</head>
+<body>
+    <h1>Sistema de Reservas</h1>
+
+    <div id="info-tiempo" style="text-align: center; margin-bottom: 20px;">
+        <p id="hora-servidor">🖥️ Hora servidor (America/Montevideo): Cargando...</p>
+        <p id="hora-navegador">📍 Hora navegador (America/Montevideo): Cargando...</p>
+    </div>
+
+    <div class="input-section">
+        {% if not id_negocio %}
+        <label for="negocio">ID de Negocio:</label>
+        <input type="text" id="negocio" placeholder="Ej: mi_negocio" value="{{ id_negocio if id_negocio else '' }}" required />
+        {% else %}
+        <input type="hidden" id="negocio" value="{{ id_negocio }}" />
+        {% endif %}
+
+        <label for="calendario">Seleccionar Calendario:</label>
+        <select id="calendario">
+            {% if calendarios_config %}
+                {% for id, config in calendarios_config.items() %}
+                    <option value="{{ id }}" {% if loop.first %}selected{% endif %}>{{ config.nombre }} (ID: {{ id }})</option>
+                {% endfor %}
+            {% else %}
+                 <option value="" disabled selected>Seleccione un calendario</option>
+            {% endif %}
+        </select>
+
+        <button id="cargar">Cargar Calendario</button>
+    </div>
+
+    <div id="calendario-container">
+    </div>
+
+    <p style="text-align: center; margin-top: 20px;">
+        <a href="/reservas/{{ id_negocio if id_negocio else 'ID_NEGOCIO_AQUI' }}/admin" target="_blank">
+            Ir a Panel de Administración (abrir en nueva pestaña)
+        </a>
+    </p>
+
+    <div id="toast" class="toast"></div>
+
+    <div id="modal-reserva" class="modal">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Confirmar Reserva</h2>
+            <p>Fecha: <span id="reserva-fecha"></span></p>
+            <p>Hora: <span id="reserva-hora"></span></p>
+            <label for="nombre-usuario">Tu Nombre:</label>
+            <input type="text" id="nombre-usuario" required />
+            <button id="confirmar-reserva">Confirmar Reserva</button>
+        </div>
+    </div>
+
+    <div id="detalle-dia-panel" class="sidebar-panel">
+        <div class="panel-header">
+            <span class="close-button">&times;</span>
+        </div>
+        <div class="panel-content">
+            </div>
+    </div>
+</body>
+</html>
