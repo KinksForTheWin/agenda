@@ -1,0 +1,2334 @@
+
+
+--- Archivo: Directorio actual\app.py ---
+
+import os
+import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from fastapi import FastAPI, HTTPException, Request, status, Form
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+
+from Reservar import (
+    bloques_horarios,
+    cargar_reservas,
+    crear_reserva,
+    get_dia_del_anio,
+    cargar_config_negocio,
+    guardar_config_negocio
+)
+from pydantic import BaseModel
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+MARGEN_MINUTOS = 60  # Configurable
+TIMEZONE = ZoneInfo("America/Montevideo")  # Zona horaria configurada
+
+class ReservaRequest(BaseModel):
+    idNegocio: str
+    idCalendario: int
+    fecha: str  # YYYY-MM-DD
+    hora: str   # HH:MM
+    usuario: str
+
+class CalendarConfig(BaseModel):
+    nombre: str
+    horario_inicio: int
+    horario_fin: int
+    duracion_turno_min: int
+    dias_habiles: list[int] # 0=Lunes, 6=Domingo
+    fecha_maxima_reserva: str | None = None
+
+class BusinessConfig(BaseModel):
+    max_calendarios: int = 1
+    calendarios: dict[str, CalendarConfig] = {}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request, "id_negocio": None, "max_calendarios": None, "calendarios_config": {}})
+
+@app.get("/reservas/{id_negocio}", response_class=HTMLResponse)
+async def show_reservations(request: Request, id_negocio: str):
+    config_negocio = cargar_config_negocio(id_negocio)
+    max_calendarios = config_negocio.get("max_calendarios", 1)
+    calendarios_config = config_negocio.get("calendarios", {})
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "id_negocio": id_negocio,
+            "max_calendarios": max_calendarios,
+            "calendarios_config": calendarios_config
+        }
+    )
+
+@app.get("/reservas/{id_negocio}/admin", response_class=HTMLResponse)
+async def admin_panel(request: Request, id_negocio: str):
+    config_negocio = cargar_config_negocio(id_negocio)
+    max_calendarios_value = config_negocio.get("max_calendarios", 1)
+    calendarios_config_value = config_negocio.get("calendarios", {})
+
+    default_fecha_maxima_value = (datetime.now(TIMEZONE) + timedelta(days=90)).strftime("%Y-%m-%d")
+
+    dias_semana_nombres = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+    return templates.TemplateResponse("admin.html", {
+        "request": request,
+        "id_negocio": id_negocio,
+        "max_calendarios": max_calendarios_value,
+        "calendarios_config": calendarios_config_value,
+        "dias_semana_nombres": dias_semana_nombres,
+        "default_fecha_maxima": default_fecha_maxima_value
+    })
+
+
+@app.post("/reservas/{id_negocio}/admin/config", response_class=HTMLResponse)
+async def save_admin_config(request: Request, id_negocio: str,
+                            max_calendarios: int = Form(...),
+                            ):
+    form_data = await request.form()
+
+    # 1. Cargar la configuración actual del negocio
+    current_config = cargar_config_negocio(id_negocio) # This loads the *initial* config
+
+    # 2. Actualizar max_calendarios
+    current_config["max_calendarios"] = max_calendarios
+
+    # 3. Inicializar un nuevo diccionario para los calendarios que vamos a guardar
+    updated_calendarios = {}
+
+    for i in range(1, max_calendarios + 1):
+        cal_id = str(i)
+        
+        # Obtener la configuración existente para este calendario o un diccionario vacío si no existe
+        existing_cal_config = current_config.get("calendarios", {}).get(cal_id, {})
+
+        # Obtener valores del formulario, usando defaults si no están presentes
+        nombre = form_data.get(f"nombre_calendario_{i}", f"Calendario {i}")
+        horario_inicio = int(form_data.get(f"horario_inicio_{i}", 9))
+        horario_fin = int(form_data.get(f"horario_fin_{i}", 18))
+        duracion_turno_min = int(form_data.get(f"duracion_turno_min_{i}", 30))
+        dias_habiles_str = form_data.getlist(f"dias_habiles_{i}")
+        dias_habiles = [int(d) for d in dias_habiles_str]
+
+        fecha_maxima_reserva = form_data.get(f"fecha_maxima_reserva_{i}")
+        if fecha_maxima_reserva == "":
+            fecha_maxima_reserva = None
+
+        # Construir la configuración para el calendario actual, sobrescribiendo lo que venga del formulario
+        current_calendar_data = {
+            "nombre": nombre,
+            "horario_inicio": horario_inicio,
+            "horario_fin": horario_fin,
+            "duracion_turno_min": duracion_turno_min,
+            "dias_habiles": dias_habiles,
+            "fecha_maxima_reserva": fecha_maxima_reserva
+        }
+        
+        existing_cal_config.update(current_calendar_data)
+        updated_calendarios[cal_id] = existing_cal_config
+
+    # Asignar el diccionario de calendarios actualizado a la configuración principal
+    current_config["calendarios"] = updated_calendarios
+
+    # 4. Guardar la configuración actualizada
+    guardar_config_negocio(id_negocio, current_config)
+
+    # 5. Volver a cargar la configuración desde el archivo DESPUÉS de guardar
+    # Esto asegura que la plantilla siempre muestre la configuración persistida en el disco.
+    reloaded_config = cargar_config_negocio(id_negocio)
+
+    # Re-render the admin panel with a success message
+    default_fecha_maxima_value = (datetime.now(TIMEZONE) + timedelta(days=90)).strftime("%Y-%m-%d")
+    dias_semana_nombres = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "id_negocio": id_negocio,
+            # Pasar los valores recargados del archivo JSON
+            "max_calendarios": reloaded_config.get("max_calendarios", 1),
+            "calendarios_config": reloaded_config.get("calendarios", {}),
+            "mensaje": "Configuración guardada exitosamente!",
+            "dias_semana_nombres": dias_semana_nombres,
+            "default_fecha_maxima": default_fecha_maxima_value
+        },
+        status_code=status.HTTP_200_OK
+    )
+
+@app.get("/disponibilidad/{id_negocio}/{id_calendario}")
+async def get_disponibilidad(id_negocio: str, id_calendario: int):
+    config = cargar_config_negocio(id_negocio)
+    calendarios_config = config.get("calendarios", {})
+    
+    if str(id_calendario) not in calendarios_config:
+        raise HTTPException(status_code=404, detail="Calendario no encontrado para este negocio.")
+    
+    cal_config = calendarios_config[str(id_calendario)]
+
+    all_reservations_by_date = {}
+    now = datetime.now(TIMEZONE)
+    
+    for i in range(366): 
+        current_date = now + timedelta(days=i)
+        fecha_str = current_date.strftime("%Y-%m-%d")
+        dia_del_anio = get_dia_del_anio(current_date)
+
+        reservas_for_day = cargar_reservas(id_negocio, dia_del_anio, id_calendario)
+        
+        if reservas_for_day:
+            all_reservations_by_date[fecha_str] = reservas_for_day
+
+    bloques_por_dia_semana = {}
+    for dia_semana_num_py in range(7):
+        bloques_por_dia_semana[str(dia_semana_num_py)] = bloques_horarios(
+            id_negocio,
+            id_calendario,
+            dia_semana_num_py
+        )
+
+    return {
+        "dias": all_reservations_by_date,
+        "bloques_por_dia_semana": bloques_por_dia_semana,
+        "fecha_maxima_reserva": cal_config.get("fecha_maxima_reserva")
+    }
+
+@app.post("/reservar")
+async def reservar(reserva_request: ReservaRequest):
+    try:
+        crear_reserva(
+            reserva_request.idNegocio,
+            reserva_request.fecha,
+            reserva_request.hora,
+            reserva_request.usuario,
+            reserva_request.idCalendario
+        )
+        return {"mensaje": "Reserva creada exitosamente!"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {e}")
+
+@app.get("/hora-servidor", response_class=JSONResponse)
+async def get_server_time():
+    now = datetime.now(TIMEZONE)
+    return {"hora": now.strftime("%Y-%m-%d %H:%M:%S")}
+================================================================================
+
+
+--- Archivo: Directorio actual\COMBINAR ARCHIVOS.bat ---
+
+@echo off
+cd /d "%~dp0"
+python COMBINAR.py
+pause
+================================================================================
+
+
+--- Archivo: Directorio actual\Combinar.py ---
+
+import os
+
+def crear_copia_archivos():
+    """
+    Crea un archivo de texto con el contenido de archivos específicos
+    (.py, .bat, .js, .jsx, .html, .json)
+    en el directorio actual y sus subcarpetas, excluyendo __pycache__ y venv.
+    """
+    
+    # Directorio raíz donde se ejecuta el script
+    directorio_raiz = os.getcwd()
+
+    # Tipos de archivo a incluir
+    extensiones_incluidas = [".py", ".bat", ".js", ".jsx", ".html", ".css", ".json"]
+
+    # Carpetas a excluir
+    carpetas_excluidas = ["__pycache__", "venv"]
+
+    # Nombre del archivo de salida
+    nombre_archivo_salida = "codigo_copilado.txt"
+    ruta_archivo_salida = os.path.join(directorio_raiz, nombre_archivo_salida)
+
+    print(f"🚀 Iniciando la copia de archivos en: {directorio_raiz}")
+    print(f"🔍 Buscando extensiones: {', '.join(extensiones_incluidas)}")
+    print(f"🚫 Excluyendo carpetas: {', '.join(carpetas_excluidas)}")
+    print(f"💾 El contenido se guardará en: {ruta_archivo_salida}\n")
+
+    archivos_procesados_count = 0
+
+    try:
+        with open(ruta_archivo_salida, "w", encoding="utf-8") as archivo_salida:
+            for carpeta_actual, subdirectorios, archivos in os.walk(directorio_raiz):
+                # Modificamos subdirectorios in-place para que os.walk no entre en las carpetas excluidas
+                subdirectorios[:] = [d for d in subdirectorios if d not in carpetas_excluidas]
+
+                # Obtener la ruta relativa para una mejor visualización en la salida
+                ruta_relativa_carpeta = os.path.relpath(carpeta_actual, directorio_raiz)
+                if ruta_relativa_carpeta == ".":
+                    ruta_para_mostrar = "Directorio actual"
+                else:
+                    ruta_para_mostrar = ruta_relativa_carpeta
+
+                for archivo in archivos:
+                    nombre_base, extension = os.path.splitext(archivo)
+                    if extension.lower() in extensiones_incluidas:
+                        ruta_completa_archivo = os.path.join(carpeta_actual, archivo)
+                        try:
+                            with open(ruta_completa_archivo, "r", encoding="utf-8") as f:
+                                contenido = f.read()
+                                
+                                # Escribir el encabezado del archivo en el archivo de salida
+                                archivo_salida.write(f"\n\n--- Archivo: {os.path.join(ruta_para_mostrar, archivo)} ---\n\n")
+                                archivo_salida.write(contenido)
+                                archivo_salida.write("\n" + "=" * 80 + "\n") # Separador visual
+                                archivos_procesados_count += 1
+                                print(f"  ✅ Copiado: {os.path.join(ruta_para_mostrar, archivo)}")
+                        except Exception as e:
+                            print(f"  ❌ Error al leer '{os.path.join(ruta_para_mostrar, archivo)}': {e}")
+            
+        if archivos_procesados_count > 0:
+            print(f"\n🎉 ¡Éxito! Se copiaron {archivos_procesados_count} archivos a '{nombre_archivo_salida}'.")
+        else:
+            print(f"\n⚠️ No se encontraron archivos que coincidan con los criterios en el directorio y subcarpetas. Se creó '{nombre_archivo_salida}' pero está vacío.")
+
+    except Exception as e:
+        print(f"\n🚨 ¡ERROR FATAL! No se pudo crear o escribir en '{nombre_archivo_salida}': {e}")
+        print("Por favor, verifica los permisos de escritura en el directorio donde estás ejecutando el script.")
+
+    # Pausa para que el usuario pueda leer los mensajes
+    input("\nPresiona Enter para cerrar la ventana...")
+
+if __name__ == "__main__":
+    crear_copia_archivos()
+================================================================================
+
+
+--- Archivo: Directorio actual\CORRER.bat ---
+
+@echo off
+cd /d "%~dp0"
+
+REM Crear entorno virtual si no existe
+if not exist venv (
+    echo Creando entorno virtual...
+    python -m venv venv
+)
+
+REM Activar entorno virtual
+call "venv\Scripts\activate.bat"
+
+REM Actualizar pip
+echo Actualizando pip...
+python -m pip install --upgrade pip
+
+REM Instalar fastapi si no está
+pip show fastapi >nul 2>&1
+if errorlevel 1 (
+    pip install fastapi
+) else (
+    echo fastapi ya instalado.
+)
+
+REM Instalar uvicorn si no está
+pip show uvicorn >nul 2>&1
+if errorlevel 1 (
+    pip install uvicorn
+) else (
+    echo uvicorn ya instalado.
+)
+
+REM Instalar jinja2 si no está
+pip show jinja2 >nul 2>&1
+if errorlevel 1 (
+    pip install jinja2
+) else (
+    echo jinja2 ya instalado.
+)
+
+REM Instalar tzdata si no está (para zoneinfo en Windows)
+pip show tzdata >nul 2>&1
+if errorlevel 1 (
+    pip install tzdata
+) else (
+    echo tzdata ya instalado.
+)
+
+REM Instalar pytz si no está (opcional alternativa zoneinfo)
+pip show pytz >nul 2>&1
+if errorlevel 1 (
+    pip install pytz
+) else (
+    echo pytz ya instalado.
+)
+
+REM Instalar python-multipart si no está (necesario para manejar formularios FastAPI)
+pip show python-multipart >nul 2>&1
+if errorlevel 1 (
+    pip install python-multipart
+) else (
+    echo python-multipart ya instalado.
+)
+
+REM Abrir navegador en segundo plano
+start "" http://127.0.0.1:8000
+
+REM Ejecutar servidor uvicorn (sin pause para permitir cerrar ventana con X)
+uvicorn app:app --reload
+
+================================================================================
+
+
+--- Archivo: Directorio actual\Reservar.py ---
+
+import os
+import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo # Asegúrate de que zoneinfo esté importado
+
+# Configuración de zona horaria (Montevideo)
+TIMEZONE = ZoneInfo("America/Montevideo")
+
+BASE_DIR = os.path.join(os.path.dirname(__file__), "reservas")
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config_negocios") # Nuevo directorio para configuraciones
+
+
+def _get_reservation_path(id_negocio: str, dia_del_anio: str, id_calendario: int) -> str:
+    """Retorna la ruta al archivo de reservas para un día y calendario específicos."""
+    return os.path.join(BASE_DIR, id_negocio, dia_del_anio, f"{id_calendario}.json")
+
+def _get_business_config_path(id_negocio: str) -> str:
+    """Retorna la ruta al archivo de configuración de un negocio."""
+    return os.path.join(CONFIG_DIR, f"{id_negocio}.json")
+
+def cargar_reservas(id_negocio: str, dia_del_anio: str, id_calendario: int) -> list:
+    """Carga las reservas existentes para un día y calendario específicos."""
+    path = _get_reservation_path(id_negocio, dia_del_anio, id_calendario)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def guardar_reservas(id_negocio: str, dia_del_anio: str, id_calendario: int, reservas: list):
+    """Guarda las reservas para un día y calendario específicos."""
+    dir_path = os.path.dirname(_get_reservation_path(id_negocio, dia_del_anio, id_calendario))
+    os.makedirs(dir_path, exist_ok=True)
+    with open(_get_reservation_path(id_negocio, dia_del_anio, id_calendario), "w", encoding="utf-8") as f:
+        json.dump(reservas, f, indent=4)
+
+def cargar_config_negocio(id_negocio: str) -> dict:
+    """Carga la configuración de un negocio."""
+    path = _get_business_config_path(id_negocio)
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def guardar_config_negocio(id_negocio: str, config: dict):
+    """Guarda la configuración de un negocio."""
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(_get_business_config_path(id_negocio), "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4)
+
+
+def get_dia_del_anio(fecha: datetime) -> str:
+    """Retorna el día del año como una cadena formateada (ej: '001', '365')."""
+    return fecha.strftime("%j") # %j es el día del año como número decimal con relleno de cero
+
+
+def bloques_horarios(id_negocio: str, id_calendario: int, dia_semana_num: int) -> list:
+    """Genera una lista de bloques horarios disponibles para un calendario y día de la semana."""
+    config = cargar_config_negocio(id_negocio)
+    
+    # Obtener configuración específica del calendario, si existe
+    calendario_config = config.get("calendarios", {}).get(str(id_calendario), {})
+
+    # Valores por defecto si no están en la configuración del calendario
+    horario_inicio_hora = calendario_config.get("horario_inicio", 9)
+    horario_fin_hora = calendario_config.get("horario_fin", 18)
+    duracion_turno_min = calendario_config.get("duracion_turno_min", 30)
+    dias_habiles_config = calendario_config.get("dias_habiles", [0, 1, 2, 3, 4]) # Por defecto L-V
+
+    # Si el día de la semana no es hábil según la configuración, no hay bloques.
+    # weekday() returns 0 for Monday, 6 for Sunday.
+    # getDay() in JS returns 0 for Sunday, 6 for Saturday.
+    # Adjusting for Python's weekday: 0=Monday, ..., 6=Sunday.
+    # If the dias_habiles_config array corresponds to JS getDay() (0=Sun, 6=Sat),
+    # then map it for Python's weekday():
+    # JS_DAY_TO_PY_DAY = {0:6, 1:0, 2:1, 3:2, 4:3, 5:4, 6:5}
+    # For now, assuming dias_habiles_config directly uses Python's weekday (0=Mon, ..., 6=Sun)
+    if dia_semana_num not in dias_habiles_config:
+        return []
+
+    bloques = []
+    inicio = datetime(1, 1, 1, horario_inicio_hora, 0, tzinfo=TIMEZONE)
+    fin = datetime(1, 1, 1, horario_fin_hora, 0, tzinfo=TIMEZONE)
+    
+    current_block = inicio
+    while current_block < fin:
+        bloques.append({"hora": current_block.strftime("%H:%M")})
+        current_block += timedelta(minutes=duracion_turno_min)
+    return bloques
+
+
+def crear_reserva(id_negocio: str, fecha_str: str, hora: str, usuario: str, id_calendario: int):
+    """Crea una nueva reserva si el bloque horario está disponible."""
+    try:
+        fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").replace(tzinfo=TIMEZONE)
+    except ValueError:
+        raise ValueError("Formato de fecha inválido. Use YYYY-MM-DD.")
+
+    dia_del_anio = get_dia_del_anio(fecha_obj)
+    
+    # Verificar si el día es hábil para el calendario
+    dia_semana_num = fecha_obj.weekday() # 0=Monday, 6=Sunday
+    bloques_validos = bloques_horarios(id_negocio, id_calendario, dia_semana_num)
+    
+    if not any(b['hora'] == hora for b in bloques_validos):
+        raise ValueError("El horario seleccionado no es válido o el día no es hábil para este calendario.")
+
+    reservas = cargar_reservas(id_negocio, dia_del_anio, id_calendario)
+
+    # Verificar si la hora ya está reservada
+    if any(reserva['hora'] == hora for reserva in reservas):
+        raise ValueError(f"El horario {hora} del día {fecha_str} ya está reservado para el calendario {id_calendario}.")
+
+    nueva_reserva = {
+        "fecha": fecha_str,
+        "hora": hora,
+        "usuario": usuario,
+        "timestamp": datetime.now(TIMEZONE).isoformat()
+    }
+    reservas.append(nueva_reserva)
+    guardar_reservas(id_negocio, dia_del_anio, id_calendario, reservas)
+    return nueva_reserva
+================================================================================
+
+
+--- Archivo: config_negocios\1.json ---
+
+{
+    "max_calendarios": 2,
+    "calendarios": {
+        "1": {
+            "nombre": "Nuevo Calendario",
+            "horario_inicio": 9,
+            "horario_fin": 18,
+            "duracion_turno_min": 30,
+            "dias_habiles": [
+                0,
+                1,
+                2,
+                3,
+                4
+            ],
+            "fecha_maxima_reserva": "2025-10-07"
+        },
+        "2": {
+            "nombre": "Nuevo Calendario",
+            "horario_inicio": 9,
+            "horario_fin": 18,
+            "duracion_turno_min": 30,
+            "dias_habiles": [
+                0,
+                1,
+                2,
+                3,
+                4
+            ],
+            "fecha_maxima_reserva": "2025-10-20"
+        }
+    }
+}
+================================================================================
+
+
+--- Archivo: reservas\1\226\1.json ---
+
+[
+    {
+        "fecha": "2025-08-14",
+        "hora": "09:00",
+        "usuario": "Juan Ignacio Yannuzzi",
+        "timestamp": "2025-07-22T11:52:01.854306-03:00"
+    }
+]
+================================================================================
+
+
+--- Archivo: static\admin-styles.css ---
+
+/* Estilos específicos para el panel de administración, siguiendo el tema Windows 9x */
+
+/* Contenedor principal del panel */
+.container {
+    max-width: 800px;
+    margin: 20px auto; /* Centrar y darle un margen superior e inferior */
+    background-color: #C0C0C0; /* Gris de ventana estándar */
+    padding: 20px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: none; /* Quitamos sombras suaves */
+    flex-grow: 1;
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    border-radius: 8px; /* ✨ Redondeado para el contenedor principal */
+}
+
+/* Títulos */
+h1 {
+    color: #000000;
+    text-align: center;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF; /* Sombra sutil para efecto 3D */
+    margin-bottom: 20px;
+    font-size: 2.2em; /* Un poco más grande para el título principal */
+    padding-bottom: 10px;
+    /* border-bottom: 1px dashed #808080; */ /* ❌ Eliminada la barra separadora del título */
+}
+
+/* El h2 para cada calendario individual se mantiene, como antes. */
+h3 { /* Cambiado de h2 a h3 para los títulos de calendario, si quieres diferenciarlos de otros posibles h2 */
+    font-size: 1.5em;
+    margin-top: 25px;
+    margin-bottom: 15px;
+    color: #000080; /* Azul como las barras de título secundarias */
+    text-shadow: 1px 1px 0 #ADD8E6; /* Sombra azul claro */
+}
+
+
+/* Secciones de formulario (ahora se aplican a cada bloque de calendario dinámico) */
+.form-section {
+    margin-bottom: 30px;
+    background-color: #E0E0E0; /* Fondo ligeramente diferente para destacar el bloque de calendario */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    border-radius: 6px; /* ✨ Redondeado para las secciones de formulario */
+    box-shadow: none;
+    box-sizing: border-box;
+}
+
+/* Fondo verde al cuerpo */
+body {
+    background-color: #008080; /* Fondo clásico de escritorio de Windows */
+}
+
+
+/* Etiquetas de formulario */
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: normal; /* No negrita por defecto */
+    color: #000000;
+}
+
+/* Campos de entrada de texto, número y select */
+input type="text"],
+input type="number"],
+input type="date"],
+select {
+    width: calc(100% - 10px); /* Ajuste por padding y bordes */
+    padding: 3px 5px; /* Relleno menor para campos de entrada */
+    margin-bottom: 10px;
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    font-size: 1em;
+    color: #000000;
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    -webkit-appearance: none; /* Elimina estilos por defecto de algunos navegadores */
+    -moz-appearance: none;
+    appearance: none;
+    border-radius: 4px; /* ✨ Redondeado para los campos de entrada */
+}
+
+/* Estilos para grupos de checkboxes */
+.checkbox-group label {
+    display: inline-block;
+    margin-right: 15px;
+    font-weight: normal;
+}
+
+/* Botones: Agregar Calendario, Guardar, Volver (todos con el mismo estilo gris) */
+button, .back-button {
+    background-color: #C0C0C0; /* Gris de botón estándar para todos */
+    color: #000000;
+    padding: 5px 15px; /* Relleno típico de botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: normal;
+    width: auto; /* No ocupan todo el ancho */
+    margin: 10px 5px; /* Espacio entre ellos */
+    box-shadow: none; /* Sin sombras suaves */
+    text-decoration: none; /* Para el enlace que parece botón */
+    display: inline-block; /* Para que 'width: auto' funcione en <a> y se pongan en línea */
+    text-align: center;
+    box-sizing: border-box;
+    white-space: nowrap; /* Evita que el texto del botón se rompa */
+    border-radius: 5px; /* ✨ Redondeado para los botones */
+}
+
+button:hover, .back-button:hover {
+    background-color: #D4D0C8; /* Ligeramente más claro al pasar el ratón */
+    transform: none; /* Sin transformaciones */
+}
+
+button:active, .back-button:active {
+    border-top: 2px solid #808080; /* Efecto de presionado */
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0; /* Más oscuro al presionar */
+}
+
+/* Mensajes (éxito/error) */
+.message {
+    text-align: center;
+    margin-top: 20px;
+    padding: 10px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    background-color: #E0E0E0; /* Un gris claro para el fondo del mensaje */
+    color: #000000; /* Texto negro */
+    font-weight: bold;
+    box-shadow: none;
+    border-radius: 5px; /* ✨ Redondeado para los mensajes */
+}
+
+/* Contenedor dinámico de calendarios */
+#calendarios-dinamicos {
+    margin-top: 20px;
+}
+
+/* Configuración de calendario individual (añadido dinámicamente) */
+.calendar-config {
+    margin-bottom: 20px;
+    position: relative;
+    /* La clase .form-section ya proporciona los bordes y el fondo deseados, y ahora el redondeo */
+}
+
+.calendar-config h3 { /* Aplicamos el estilo de título de calendario al h3 */
+    margin-top: 0;
+    color: #000080; /* Azul para el título del calendario */
+    display: inline-block;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #ADD8E6;
+}
+
+.calendar-config .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.calendar-config .form-row > div {
+    flex: 1;
+    min-width: 200px;
+}
+
+/* Botón de eliminar calendario (la cruz) */
+.remove-calendar-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    color: #000000; /* Color de la 'x' */
+    font-size: 20px; /* Tamaño de la 'x' */
+    font-weight: bold;
+    cursor: pointer;
+    background-color: #C0C0C0; /* Color de fondo del botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px; /* Relleno para que la 'x' no esté pegada a los bordes */
+    line-height: 1; /* Asegura que la 'x' esté centrada verticalmente */
+    width: auto; /* Ajuste automático según el contenido */
+    height: auto;
+    min-width: unset; /* Anula el min-width global de los botones */
+    margin: 0; /* Anula los márgenes globales de los botones */
+    border-radius: 3px; /* ✨ Redondeado para el botón de eliminar */
+}
+
+.remove-calendar-button:hover {
+    background-color: #D4D0C8;
+}
+
+.remove-calendar-button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+/* Contenedor de botones de pie de página (para centrar los botones "Guardar" y "Volver") */
+.footer-button-container {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    /* border-top: 2px dotted #808080; */ /* ❌ Eliminada la barra superior del pie de página */
+}
+
+/* Ajustes responsivos para pantallas pequeñas */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+        margin: 10px auto;
+    }
+
+    h1 {
+        font-size: 1.8em;
+    }
+
+    h3 {
+        font-size: 1.3em;
+    }
+
+    .form-section {
+        padding: 10px;
+    }
+
+    input type="text"],
+    input type="number"],
+    input type="date"],
+    select {
+        width: 100%; /* Asegura que ocupen todo el ancho disponible */
+        box-sizing: border-box;
+    }
+
+    button,
+    .back-button {
+        width: auto; /* Permite que el ancho se ajuste al contenido */
+        display: inline-block; /* Mantenerlos en línea para que se vean como grupo */
+        margin: 5px; /* Ajuste el margen para móviles */
+    }
+
+    .calendar-config .form-row {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .calendar-config .form-row > div {
+        min-width: unset;
+        width: 100%;
+    }
+
+    .remove-calendar-button {
+        width: 20px; /* Tamaño más pequeño en móvil */
+        height: 20px;
+        font-size: 1em;
+    }
+}
+================================================================================
+
+
+--- Archivo: static\app.js ---
+
+// Variables globales
+const TIMEZONE_SERVER = "America/Montevideo"; // Asegúrate de que coincida con tu backend
+let datosCalendarioGlobal = {};
+let negocioIdGlobal = ''; // Para almacenar el ID del negocio globalmente
+let calendarioIdGlobal = ''; // Para almacenar el ID del calendario globalmente
+let currentOutsideClickListener = null; // Para manejar el cierre del panel lateral al hacer clic fuera
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Escuchar el click en el botón "Cargar Calendario"
+    const cargarBtn = document.getElementById('cargar');
+    if (cargarBtn) {
+        cargarBtn.addEventListener('click', cargarCalendario);
+    }
+
+    // Escuchar el cambio en el menú desplegable del calendario
+    const calendarioSelect = document.getElementById('calendario');
+    if (calendarioSelect) {
+        calendarioSelect.addEventListener('change', cargarCalendario);
+        // También escuchar Enter en el select, por si el usuario lo navega con teclado
+        calendarioSelect.addEventListener("keypress", function (event) {
+            if (event.key === "Enter") {
+                cargarCalendario();
+            }
+        });
+    }
+
+    // Escuchar Enter en el input de negocio (solo si es visible)
+    const negocioInput = document.getElementById('negocio');
+    if (negocioInput && negocioInput.type !== 'hidden') {
+        negocioInput.addEventListener("keypress", function (event) {
+            if (event.key === "Enter") {
+                cargarCalendario();
+            }
+        });
+    }
+
+    // Cargar automáticamente el calendario al cargar la página
+    cargarCalendarioInicial();
+
+    // Actualizar la hora del servidor y del navegador cada segundo
+    setInterval(updateServerTime, 1000);
+    setInterval(updateBrowserTime, 1000);
+});
+
+/**
+ * Carga el calendario al inicio de la página.
+ * Intenta usar el ID de calendario de la URL si está presente, de lo contrario, usa el por defecto.
+ */
+function cargarCalendarioInicial() {
+    const negocioInput = document.getElementById('negocio');
+    const calendarioSelect = document.getElementById('calendario');
+
+    if (!negocioInput || !calendarioSelect) {
+        console.warn("Elementos 'negocio' o 'calendario' no encontrados.");
+        return;
+    }
+
+    negocioIdGlobal = negocioInput.value;
+
+    // Obtener ID de calendario de la URL (si existe)
+    const urlParams = new URLSearchParams(window.location.search);
+    const idCalendarioFromUrl = urlParams.get('calendario');
+
+    if (idCalendarioFromUrl) {
+        // Verificar si la opción realmente existe en el dropdown
+        const optionExists = Array.from(calendarioSelect.options).some(
+            option => option.value === idCalendarioFromUrl
+        );
+        if (optionExists) {
+            calendarioSelect.value = idCalendarioFromUrl;
+        } else {
+            console.warn(`Calendario ID ${idCalendarioFromUrl} de la URL no encontrado en las opciones. Usando por defecto.`);
+            calendarioSelect.value = '1'; // Fallback a Calendario 1 si el de la URL no es válido
+        }
+    } else {
+        calendarioSelect.value = '1'; // Por defecto, cargar Calendario 1
+    }
+
+    // Solo cargar si hay un ID de negocio válido
+    if (negocioIdGlobal) {
+        cargarCalendario();
+    } else {
+        mostrarToast("Ingrese un ID de negocio en la URL para comenzar. Ejemplo: /reservas/mi_negocio", 'info');
+    }
+}
+
+
+/**
+ * Carga los datos del calendario desde el backend y los renderiza.
+ * Se llama al hacer clic en el botón "Cargar", al cambiar el dropdown o al inicio.
+ */
+async function cargarCalendario() {
+    const negocioInput = document.getElementById('negocio');
+    const calendarioSelect = document.getElementById('calendario');
+
+    negocioIdGlobal = negocioInput ? negocioInput.value : '';
+    calendarioIdGlobal = calendarioSelect ? calendarioSelect.value : '';
+
+    if (!negocioIdGlobal || !calendarioIdGlobal) {
+        mostrarToast("Verifique el ID del negocio y seleccione un calendario.", 'error');
+        return;
+    }
+
+    const cargarBtn = document.getElementById('cargar');
+    if (cargarBtn) {
+        cargarBtn.disabled = true;
+        cargarBtn.textContent = "Cargando...";
+    }
+
+    // Asegurarse de que el panel lateral esté cerrado antes de cargar un nuevo calendario
+    cerrarDetalleDiaPanel();
+
+    try {
+        const response = await fetch(`/disponibilidad/${negocioIdGlobal}/${calendarioIdGlobal}`);
+        if (!response.ok) {
+            if (response.status === 404) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || "Calendario no encontrado.");
+            }
+            throw new Error(`Error HTTP! estado: ${response.status}`);
+        }
+        datosCalendarioGlobal = await response.json();
+        renderizarCalendario();
+        mostrarToast("Calendario cargado exitosamente!", 'success');
+        actualizarURL(negocioIdGlobal, calendarioIdGlobal); // Actualizar URL después de cargar
+    } catch (error) {
+        console.error("No se pudo cargar el calendario:", error);
+        document.getElementById('calendario-container').innerHTML = `
+            <p style="color: red; text-align: center;">No se pudo cargar el calendario. ${error.message || "Verifique el ID del negocio y del calendario."}</p>
+        `;
+        mostrarToast(`Error al cargar calendario: ${error.message || "Desconocido"}`, 'error');
+    } finally {
+        if (cargarBtn) {
+            cargarBtn.disabled = false;
+            cargarBtn.textContent = "Cargar Calendario";
+        }
+    }
+}
+
+/**
+ * Actualiza la URL del navegador con el ID del calendario seleccionado como parámetro de consulta.
+ * @param {string} idNegocio - El ID del negocio.
+ * @param {string} idCalendario - El ID del calendario seleccionado.
+ */
+function actualizarURL(idNegocio, idCalendario) {
+    const currentUrl = new URL(window.location);
+    currentUrl.searchParams.set('calendario', idCalendario);
+    window.history.pushState({}, '', currentUrl);
+}
+
+/**
+ * Normaliza una fecha a la medianoche de Montevideo para comparaciones.
+ * @returns {Date} La fecha de hoy a la medianoche, en la zona horaria del servidor.
+ */
+function getTodayMontevideoNormalized() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+
+/**
+ * Renderiza el calendario en el contenedor principal.
+ */
+function renderizarCalendario() {
+    const contenedor = document.getElementById('calendario-container');
+    if (!contenedor) return;
+
+    contenedor.innerHTML = ''; // Limpiar contenido anterior
+
+    const hoy = getTodayMontevideoNormalized();
+    const anioActual = hoy.getFullYear();
+    const mesActual = hoy.getMonth(); // 0-11
+
+    const fechaMaximaReservaStr = datosCalendarioGlobal.fecha_maxima_reserva;
+    let fechaMaximaReserva = null;
+    if (fechaMaximaReservaStr) {
+        try {
+            fechaMaximaReserva = new Date(fechaMaximaReservaStr + 'T00:00:00'); // Asegurar zona horaria consistente
+            fechaMaximaReserva.setHours(0, 0, 0, 0); // Limpiar la hora
+        } catch (e) {
+            console.error("Error al parsear fecha_maxima_reserva:", e);
+            fechaMaximaReserva = null;
+        }
+    }
+
+    for (let i = 0; i < 12; i++) { // Renderizar 12 meses (ej. desde el actual)
+        const fechaIteracion = new Date(anioActual, mesActual + i, 1);
+        const nombreMes = fechaIteracion.toLocaleString('es-ES', { month: 'long' });
+        const anio = fechaIteracion.getFullYear();
+        const diasEnMes = new Date(anio, fechaIteracion.getMonth() + 1, 0).getDate();
+        const primerDiaSemana = new Date(anio, fechaIteracion.getMonth(), 1).getDay(); // 0 = Domingo, 6 = Sábado
+
+        const tabla = document.createElement('table');
+        tabla.classList.add('calendario-mes');
+        tabla.innerHTML = `
+            <caption>${nombreMes.charAt(0).toUpperCase() + nombreMes.slice(1)} ${anio}</caption>
+            <thead>
+                <tr>
+                    <th>Lun</th><th>Mar</th><th>Mié</th><th>Jue</th><th>Vie</th><th>Sáb</th><th>Dom</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+        const tbody = tabla.querySelector('tbody');
+        let fila = document.createElement('tr');
+
+        // Rellenar días vacíos al inicio del mes
+        // JS getDay(): 0=Sun, 1=Mon, ..., 6=Sat
+        // Convertir a 0=Mon, ..., 6=Sun para el layout de la tabla
+        let offset = primerDiaSemana === 0 ? 6 : primerDiaSemana - 1;
+
+        for (let j = 0; j < offset; j++) {
+            fila.insertCell();
+        }
+
+        for (let dia = 1; dia <= diasEnMes; dia++) {
+            if ((offset + dia - 1) % 7 === 0 && dia !== 1) { // Si es el primer día de la semana y no es el primer día del mes
+                tbody.appendChild(fila);
+                fila = document.createElement('tr');
+            }
+            const celda = fila.insertCell();
+            celda.textContent = dia;
+
+            const fechaActualCelda = new Date(anio, fechaIteracion.getMonth(), dia);
+            fechaActualCelda.setHours(0, 0, 0, 0); // Limpiar la hora para comparaciones
+
+            // Clase para días pasados
+            if (fechaActualCelda < hoy) { // Comparar con la fecha normalizada de hoy
+                celda.classList.add('dia-pasado');
+                continue; // No permitir selecciones en días pasados
+            }
+
+            // Clase para días fuera de la fecha máxima de reserva
+            if (fechaMaximaReserva && fechaActualCelda > fechaMaximaReserva) {
+                celda.classList.add('dia-no-disponible');
+                celda.title = "No se permiten reservas después de esta fecha";
+                continue;
+            }
+
+            const fechaKey = `${anio}-${(fechaIteracion.getMonth() + 1).toString().padStart(2, '0')}-${dia.toString().padStart(2, '0')}`;
+            const reservasDelDia = datosCalendarioGlobal.dias ? datosCalendarioGlobal.dias[fechaKey] || [] : [];
+            const diaSemanaNumPy = fechaActualCelda.getDay() === 0 ? 6 : fechaActualCelda.getDay() - 1; // 0=Lun, 6=Dom (Python)
+            const bloquesDisponibles = datosCalendarioGlobal.bloques_por_dia_semana ? datosCalendarioGlobal.bloques_por_dia_semana[diaSemanaNumPy] || [] : [];
+            
+            // --- MODIFICACIÓN CLAVE AQUÍ ---
+            // Crear una lista de todos los bloques, marcando los que están reservados o pasados
+            const ahora = new Date(); // Hora actual del navegador
+            const todosLosBloquesDelDia = bloquesDisponibles.map(b => {
+                const [h, m] = b.hora.split(':').map(Number);
+                const horaBloque = new Date(fechaActualCelda.getFullYear(), fechaActualCelda.getMonth(), fechaActualCelda.getDate(), h, m);
+                
+                const isReserved = reservasDelDia.some(r => r.hora === b.hora);
+                const isPast = fechaActualCelda.toDateString() === hoy.toDateString() && horaBloque < ahora;
+
+                return {
+                    hora: b.hora,
+                    isReserved: isReserved,
+                    isPast: isPast // También marcamos como pasado si es el día actual
+                };
+            }).sort((a, b) => a.hora.localeCompare(b.hora)); // Ordenar por hora
+
+            // Determinar si el día tiene bloques disponibles para reservar
+            const tieneBloquesDisponiblesParaReservar = todosLosBloquesDelDia.some(b => !b.isReserved && !b.isPast);
+
+
+            if (tieneBloquesDisponiblesParaReservar) {
+                celda.classList.add('dia-disponible');
+                celda.dataset.fecha = fechaKey;
+                celda.dataset.bloques = JSON.stringify(todosLosBloquesDelDia); // Pasar TODOS los bloques
+                celda.addEventListener('click', () => mostrarDetalleDiaPanel(fechaKey, todosLosBloquesDelDia)); // Usar el nuevo panel lateral
+                celda.title = "Día disponible";
+            } else {
+                celda.classList.add('dia-sin-disponibilidad');
+                celda.title = "No hay horarios disponibles";
+                celda.dataset.fecha = fechaKey; // Necesario para mostrar panel incluso si no hay disponibles para reservar
+                celda.dataset.bloques = JSON.stringify(todosLosBloquesDelDia);
+                // Si quieres que el clic siga abriendo el panel para días sin disponibilidad total:
+                celda.addEventListener('click', () => mostrarDetalleDiaPanel(fechaKey, todosLosBloquesDelDia));
+            }
+            // Marcar el día actual
+            if (fechaActualCelda.toDateString() === hoy.toDateString()) {
+                celda.classList.add('dia-actual');
+            }
+        }
+        tbody.appendChild(fila); // Añadir la última fila
+        contenedor.appendChild(tabla);
+    }
+}
+
+/**
+ * Muestra un panel lateral con los horarios disponibles para el día seleccionado.
+ * @param {string} fecha - La fecha del día seleccionado (YYYY-MM-DD).
+ * @param {Array<Object>} bloques - Array de objetos con {hora: "HH:MM", isReserved: boolean, isPast: boolean} para el día.
+ */
+function mostrarDetalleDiaPanel(fecha, bloques) {
+    const panel = document.getElementById('detalle-dia-panel');
+    if (!panel) {
+        console.error("Panel de detalles de día no encontrado.");
+        return;
+    }
+
+    const panelContent = panel.querySelector('.panel-content');
+    if (!panelContent) {
+        console.error("Contenido del panel de detalles de día no encontrado.");
+        return;
+    }
+
+    // Cerrar cualquier panel abierto antes de abrir uno nuevo
+    cerrarDetalleDiaPanel();
+
+    // Limpiar contenido anterior e inyectar el nuevo
+    panelContent.innerHTML = `
+        <h3>Horarios para el ${fecha}</h3>
+        <div id="panel-horarios-list"></div>
+        <p><small>Hora servidor: <span id="hora-servidor-panel"></span></small></p>
+        <p><small>Hora navegador: <span id="hora-navegador-panel"></span></small></p>
+    `;
+
+    const horariosListDiv = panelContent.querySelector('#panel-horarios-list');
+    if (bloques.length > 0) {
+        bloques.forEach(bloque => {
+            const btn = document.createElement('button');
+            btn.classList.add('btn-hora'); // Reutilizar la clase existente para los botones de hora
+            btn.textContent = bloque.hora;
+            btn.dataset.fecha = fecha;
+            btn.dataset.hora = bloque.hora;
+
+            // --- MODIFICACIÓN CLAVE AQUÍ ---
+            if (bloque.isReserved) {
+                btn.classList.add('btn-hora-reservada'); // Nueva clase para horas reservadas
+                btn.disabled = true; // Deshabilitar el botón
+                btn.title = "Ya reservado";
+            } else if (bloque.isPast) {
+                btn.classList.add('btn-hora-pasada'); // Nueva clase para horas pasadas
+                btn.disabled = true; // Deshabilitar el botón
+                btn.title = "Hora ya pasada";
+            } else {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    prepararReserva(e.target.dataset.fecha, e.target.dataset.hora);
+                    cerrarDetalleDiaPanel();
+                });
+                btn.title = "Click para reservar";
+            }
+            horariosListDiv.appendChild(btn);
+        });
+    } else {
+        horariosListDiv.innerHTML = '<p>No hay horarios definidos para esta fecha.</p>';
+    }
+
+    // Mostrar el panel
+    panel.classList.add('open');
+    document.body.classList.add('panel-open');
+
+    const closeBtn = panel.querySelector('.close-button');
+    if (closeBtn) {
+        closeBtn.onclick = cerrarDetalleDiaPanel;
+    }
+
+    if (currentOutsideClickListener) {
+        document.removeEventListener('click', currentOutsideClickListener);
+    }
+    currentOutsideClickListener = function(event) {
+        // Cierra el panel si el clic no fue dentro del panel y el panel está abierto,
+        // y no fue en una celda de día disponible (para evitar doble-trigger).
+        if (!panel.contains(event.target) && !event.target.closest('.calendario-mes td') && panel.classList.contains('open')) {
+            cerrarDetalleDiaPanel();
+        }
+    };
+    document.addEventListener('click', currentOutsideClickListener);
+
+    if (window.panelTimeInterval) clearInterval(window.panelTimeInterval);
+    window.panelTimeInterval = setInterval(updatePanelTime, 1000);
+}
+
+/**
+ * Cierra el panel lateral de detalles del día.
+ */
+function cerrarDetalleDiaPanel() {
+    const panel = document.getElementById('detalle-dia-panel');
+    if (panel) {
+        panel.classList.remove('open');
+        document.body.classList.remove('panel-open'); // Quitar clase del body
+    }
+    // Quitar el listener de click fuera cuando el panel está cerrado
+    if (currentOutsideClickListener) {
+        document.removeEventListener('click', currentOutsideClickListener);
+        currentOutsideClickListener = null;
+    }
+    // Limpiar el intervalo de actualización de hora del panel
+    if (window.panelTimeInterval) {
+        clearInterval(window.panelTimeInterval);
+        window.panelTimeInterval = null;
+    }
+}
+
+/**
+ * Prepara y muestra el modal de confirmación de reserva.
+ * @param {string} fecha - La fecha de la reserva (YYYY-MM-DD).
+ * @param {string} hora - La hora de la reserva (HH:MM).
+ */
+function prepararReserva(fecha, hora) {
+    const modal = document.getElementById('modal-reserva');
+    const spanFecha = document.getElementById('reserva-fecha');
+    const spanHora = document.getElementById('reserva-hora');
+    const nombreUsuarioInput = document.getElementById('nombre-usuario');
+
+    spanFecha.textContent = fecha;
+    spanHora.textContent = hora;
+    nombreUsuarioInput.value = ''; // Limpiar campo de usuario
+
+    modal.style.display = 'block';
+
+    const confirmarBtn = document.getElementById('confirmar-reserva');
+    confirmarBtn.onclick = () => {
+        confirmarReserva(fecha, hora);
+    };
+
+    const closeButton = document.querySelector('#modal-reserva .close-button'); // Especificar para el modal
+    closeButton.onclick = () => {
+        modal.style.display = 'none';
+    };
+
+    window.onclick = (event) => {
+        if (event.target === modal) {
+            modal.style.display = 'none';
+        }
+    };
+}
+
+/**
+ * Envía la reserva al backend.
+ * @param {string} fecha - La fecha de la reserva.
+ * @param {string} hora - La hora de la reserva.
+ */
+async function confirmarReserva(fecha, hora) {
+    const usuario = document.getElementById('nombre-usuario').value;
+    if (!usuario) {
+        mostrarToast("Por favor, introduce tu nombre.", 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/reservar', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                idNegocio: negocioIdGlobal,
+                idCalendario: parseInt(calendarioIdGlobal),
+                fecha: fecha,
+                hora: hora,
+                usuario: usuario
+            }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            mostrarToast(data.mensaje, 'success');
+            document.getElementById('modal-reserva').style.display = 'none';
+            document.getElementById('nombre-usuario').value = ''; // Limpiar campo
+            cargarCalendario(); // Recargar el calendario para actualizar disponibilidad
+        } else {
+            throw new Error(data.detail || data.mensaje || "Error al crear la reserva.");
+        }
+    } catch (error) {
+        console.error("Error al confirmar reserva:", error);
+        mostrarToast(`Error al reservar: ${error.message}`, 'error');
+    }
+}
+
+/**
+ * Muestra un mensaje "toast" temporal en la interfaz.
+ * @param {string} mensaje - El texto del mensaje.
+ * @param {'info'|'success'|'error'} tipo - El tipo de mensaje para aplicar estilos (info, success, error).
+ */
+function mostrarToast(mensaje, tipo = 'info') {
+    const toast = document.getElementById('toast');
+    toast.textContent = mensaje;
+    toast.className = `toast ${tipo} show`; // Añade 'show' para mostrar
+    setTimeout(() => {
+        toast.className = toast.className.replace("show", ""); // Quita 'show' para ocultar
+    }, 3000); // Ocultar después de 3 segundos
+}
+
+/**
+ * Actualiza la hora del servidor mostrada en la interfaz principal.
+ */
+async function updateServerTime() {
+    try {
+        const response = await fetch('/hora-servidor');
+        const data = await response.json();
+        const horaServidorElement = document.getElementById('hora-servidor');
+        if (horaServidorElement) {
+            horaServidorElement.textContent = `🖥️ Hora servidor (${TIMEZONE_SERVER}): ${data.hora}`;
+        }
+    } catch (error) {
+        console.error("Error al obtener la hora del servidor:", error);
+        const horaServidorElement = document.getElementById('hora-servidor');
+        if (horaServidorElement) {
+            horaServidorElement.textContent = `🖥️ Hora servidor (America/Montevideo): Error al cargar`;
+        }
+    }
+}
+
+/**
+ * Actualiza la hora del navegador mostrada en la interfaz principal.
+ */
+function updateBrowserTime() {
+    const now = new Date();
+    const options = {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    };
+    const formattedTime = now.toLocaleString('es-ES', options);
+    const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Zona Desconocida';
+    const horaNavegadorElement = document.getElementById('hora-navegador');
+    if (horaNavegadorElement) {
+        horaNavegadorElement.textContent = `📍 Hora navegador (${browserTimeZone}): ${formattedTime}`;
+    }
+}
+
+/**
+ * Actualiza la hora del servidor y navegador en el panel lateral.
+ * Se llama periódicamente cuando el panel está abierto.
+ */
+async function updatePanelTime() {
+    const horaServidorPanel = document.getElementById('hora-servidor-panel');
+    const horaNavegadorPanel = document.getElementById('hora-navegador-panel');
+
+    try {
+        const response = await fetch('/hora-servidor');
+        const data = await response.json();
+        if (horaServidorPanel) {
+            horaServidorPanel.textContent = data.hora;
+        }
+    } catch (error) {
+        console.error("Error al obtener la hora del servidor para el panel:", error);
+        if (horaServidorPanel) {
+            horaServidorPanel.textContent = "Error al cargar";
+        }
+    }
+
+    if (horaNavegadorPanel) {
+        const now = new Date();
+        const options = {
+            timeZone: 'America/Montevideo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        };
+        const formatter = new Intl.DateTimeFormat('es-ES', options);
+        const montevideoTimeBrowser = formatter.format(now);
+        horaNavegadorPanel.textContent = montevideoTimeBrowser;
+    }
+}
+================================================================================
+
+
+--- Archivo: static\index-styles.css ---
+
+/* General Body Styles */
+body {
+    font-family: 'MS Sans Serif', 'Arial', sans-serif; /* Típica de Windows 9x */
+    margin: 0;
+    padding: 20px;
+    background-color: #008080; /* Fondo clásico de escritorio de Windows */
+    color: #000000; /* Texto negro para contraste */
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    transition: margin-right 0.3s ease-out;
+    -webkit-font-smoothing: none; /* Desactiva el suavizado de fuente para un look más pixelado */
+    font-size: 14px; /* Tamaño de fuente común en esas interfaces */
+}
+
+h1 {
+    color: #000000;
+    text-align: center;
+    margin-bottom: 30px;
+    font-size: 2em; /* Un poco más grande, pero sin exagerar */
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF; /* Sombra sutil para efecto 3D */
+}
+
+/* Input Section */
+.input-section {
+    background-color: #C0C0C0; /* Gris de ventana estándar */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    margin-bottom: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px; /* Reducimos el gap para un aspecto más compacto */
+    justify-content: center;
+    align-items: center;
+    transition: margin-right 0.3s ease-out;
+    border-radius: 8px; /* Redondeado */
+}
+
+.input-section label {
+    font-weight: normal; /* No negrita, estilo más plano */
+    color: #000000;
+    white-space: nowrap;
+    margin-right: 5px; /* Pequeño espacio para separar */
+}
+
+.input-section input[type="text"],
+.input-section input[type="number"],
+.input-section select {
+    padding: 3px 5px; /* Relleno menor para campos de entrada */
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    font-size: 1em;
+    color: #000000;
+    flex-grow: 1;
+    min-width: 120px; /* Reducimos el min-width */
+    box-sizing: border-box; /* Asegura que padding y border se incluyan en el ancho */
+    border-radius: 4px; /* Redondeado */
+}
+
+.input-section button {
+    background-color: #C0C0C0; /* Gris de botón estándar */
+    color: #000000;
+    padding: 5px 15px; /* Relleno típico de botón */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 1em;
+    font-weight: normal;
+    transition: none; /* Desactivar transiciones para inmediatez */
+    box-shadow: none; /* Sin sombras suaves */
+    border-radius: 5px; /* Redondeado */
+}
+
+.input-section button:hover {
+    background-color: #D4D0C8; /* Ligeramente más claro al pasar el ratón */
+    transform: none; /* Sin transformaciones */
+}
+
+.input-section button:active {
+    border-top: 2px solid #808080; /* Efecto de presionado */
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0; /* Más oscuro al presionar */
+}
+
+.input-section button:disabled {
+    background-color: #C0C0C0;
+    color: #808080; /* Gris para texto deshabilitado */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Calendar Container */
+#calendario-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); /* Min-width un poco más pequeño */
+    gap: 15px; /* Espacio reducido */
+    width: 100%;
+    max-width: 1200px;
+    margin-top: 15px;
+    padding: 0; /* Sin padding en el contenedor */
+    transition: margin-right 0.3s ease-out;
+}
+
+.calendario-mes {
+    background-color: #C0C0C0; /* Fondo gris para todo el bloque */
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    overflow: hidden; /* Importante para que los bordes redondeados se apliquen bien al contenido */
+    width: 100%;
+    border-radius: 8px; /* Redondeado aplicado a todo el bloque gris/azul */
+    position: relative;
+}
+
+/* Estilo para la tabla dentro del calendario */
+.calendario-mes table {
+    width: 100%;
+    border-collapse: collapse; /* Elimina el espacio entre celdas */
+    margin: 0; /* Elimina cualquier margen por defecto de la tabla */
+    padding: 0; /* Elimina cualquier padding por defecto de la tabla */
+    /* El caption se posiciona en relación a esta tabla si es su primer hijo */
+}
+
+.calendario-mes caption {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #FFFFFF; /* Texto blanco para el título del mes */
+    background-color: #000080; /* Barra de título azul */
+    text-align: center;
+    line-height: 1.2;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    
+    /* --- CAMBIOS PARA FUSIONAR COMO UN SOLO BLOQUE --- */
+    /* Revertimos los márgenes y ancho que podrían haber causado el problema visual */
+    width: auto; /* Dejar que el navegador maneje el ancho del caption */
+    margin: 0; /* Elimina cualquier margen predeterminado */
+    
+    /* Aseguramos que el caption no tenga sus propios radios */
+    border-radius: 0; 
+    
+    /* Posicionamos el caption en la parte superior del div principal para que use el border-radius del padre */
+    position: absolute; /* Usamos absolute para sacarlo del flujo normal */
+    top: 0;
+    left: 0;
+    right: 0;
+    /* Necesitamos un z-index para asegurarnos de que el caption esté por encima del resto del contenido */
+    z-index: 1; 
+    
+    /* Establecemos el box-sizing para que el padding no afecte el width total */
+    box-sizing: border-box;
+}
+
+/* Ajustamos el padding-top del div principal para dar espacio al caption absoluto */
+.calendario-mes {
+    padding-top: 40px; /* Ajusta este valor según la altura de tu caption + un poco de buffer */
+    /* Asegúrate de que este padding no se sume al padding del caption en sí, si es que lo tienes */
+}
+
+
+.calendario-mes caption::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px; /* Alineamos con el borde interno izquierdo del .calendario-mes */
+    width: calc(100% - 4px); /* Resta los 2px de bisel de cada lado */
+    height: 3px;
+    background: linear-gradient(to right, #0000A0, #000080); /* Degradado sutil */
+    border-radius: 0; /* Aseguramos que no tenga sus propios radios */
+}
+
+.calendario-mes th,
+.calendario-mes td {
+    text-align: center;
+    padding: 5px 0; /* Relleno más pequeño para las celdas */
+    border: 1px solid #808080; /* Bordes internos más oscuros */
+    box-sizing: border-box; /* Para que el borde no aumente el tamaño de la celda */
+}
+
+.calendario-mes th {
+    background-color: #C0C0C0; /* Fondo gris para encabezados */
+    color: #000000;
+    font-weight: normal;
+    font-size: 0.9em;
+    border-bottom: 1px solid #808080; /* Borde inferior más marcado */
+}
+
+/* Day Cell Styles */
+.calendario-mes td {
+    cursor: pointer;
+    transition: none; /* Sin transiciones suaves */
+    font-size: 1em;
+    font-weight: normal;
+    background-color: #FFFFFF; /* Fondo blanco para los días por defecto */
+    color: #000000;
+    border-radius: 3px; /* Ligero redondeado para las celdas */
+}
+
+/* Estilo para los días "vacíos" o fuera del mes */
+.calendario-mes td:empty {
+    background-color: #C0C0C0; /* Gris de la interfaz para los espacios vacíos */
+    cursor: default; /* Cursor por defecto, no de puntero */
+    border: none; /* Elimina completamente el borde de las celdas vacías */
+}
+
+/* Specific Day Status Colors */
+.calendario-mes .dia-disponible {
+    background-color: #90EE90; /* Verde claro para disponible (LightGreen) */
+    color: #006400; /* Verde oscuro para texto (DarkGreen) */
+    font-weight: bold;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-disponible:hover {
+    background-color: #7CFC00; /* Verde más brillante al pasar el ratón (LawnGreen) */
+    transform: none; /* Sin transformación */
+}
+
+.calendario-mes .dia-disponible:active {
+    background-color: #6B8E23; /* Verde oliva al presionar */
+    border-top: 1px solid #FFFFFF;
+    border-left: 1px solid #FFFFFF;
+    border-right: 1px solid #808080;
+    border-bottom: 1px solid #808080;
+}
+
+.calendario-mes .dia-sin-disponibilidad {
+    background-color: #FF6347; /* Rojo tomate para no disponible */
+    color: #8B0000; /* Rojo oscuro para el texto (DarkRed) */
+    cursor: not-allowed;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-pasado {
+    background-color: #D4D0C8; /* Un gris ligeramente diferente para días pasados */
+    color: #A0A0A4;
+    cursor: not-allowed;
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-no-disponible {
+    background-color: #D4D0C8;
+    color: #808080;
+    cursor: not-allowed;
+    font-style: normal; /* Sin cursiva */
+    border-radius: 3px;
+}
+
+.calendario-mes .dia-actual {
+    border: 2px solid #0000FF; /* Borde azul para el día actual */
+    background-color: #ADD8E6; /* Azul claro para el fondo del día actual */
+    font-weight: bold;
+    border-radius: 3px; /* También redondeado */
+}
+
+/* Admin Panel Link */
+p a {
+    color: #000080; /* Azul estándar de enlaces */
+    text-decoration: underline; /* Subrayado por defecto */
+    font-weight: normal;
+    transition: none;
+}
+
+p a:hover {
+    color: #0000FF; /* Azul más claro al pasar el ratón */
+    text-decoration: underline;
+}
+
+/* Toast Messages */
+#toast {
+    visibility: hidden;
+    min-width: 250px;
+    margin-left: -125px;
+    background-color: #000000; /* Fondo negro para mensajes */
+    color: #FFFFFF;
+    text-align: center;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 10px;
+    position: fixed;
+    z-index: 1000;
+    left: 50%;
+    bottom: 30px;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s, visibility 0.3s;
+    transform: translateX(-50%);
+    box-shadow: none; /* Sin sombras suaves */
+    border-radius: 5px; /* Redondeado */
+}
+
+#toast.show {
+    visibility: visible;
+    opacity: 1;
+}
+
+#toast.success { background-color: #008000; } /* Verde para éxito */
+#toast.error { background-color: #FF0000; } /* Rojo para error */
+#toast.info { background-color: #0000FF; } /* Azul para info */
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(128,128,128,0.7); /* Fondo gris semitransparente */
+}
+
+.modal-content {
+    background-color: #C0C0C0;
+    margin: 10% auto; /* Ajustamos el margen para que aparezca más arriba */
+    padding: 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    width: 80%;
+    max-width: 400px; /* Reducimos el tamaño máximo */
+    position: relative;
+    box-shadow: none;
+    animation-name: animatetop;
+    animation-duration: 0.4s;
+    font-size: 14px;
+    border-radius: 8px; /* Redondeado */
+}
+
+@keyframes animatetop {
+    from {top: -300px; opacity: 0}
+    to {top: 10%; opacity: 1}
+}
+
+.close-button {
+    color: #000000;
+    float: right;
+    font-size: 20px; /* Tamaño más pequeño para la 'x' */
+    font-weight: bold;
+    cursor: pointer;
+    background-color: #C0C0C0;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px;
+    line-height: 1; /* Para que la 'x' se vea bien */
+    border-radius: 3px; /* Redondeado */
+}
+
+.close-button:hover,
+.close-button:focus {
+    color: #000000;
+    background-color: #D4D0C8;
+    text-decoration: none;
+}
+
+.modal-content input[type="text"] {
+    width: calc(100% - 10px); /* Ajuste por padding y bordes */
+    padding: 3px 5px;
+    margin-top: 10px;
+    margin-bottom: 15px;
+    border-top: 1px solid #808080;
+    border-left: 1px solid #808080;
+    border-right: 1px solid #FFFFFF;
+    border-bottom: 1px solid #FFFFFF;
+    background-color: #FFFFFF;
+    box-sizing: border-box;
+    border-radius: 4px; /* Redondeado */
+}
+
+.modal-content button {
+    background-color: #C0C0C0;
+    color: #000000;
+    padding: 5px 15px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 14px;
+    transition: none;
+    box-shadow: none;
+    border-radius: 5px; /* Redondeado */
+}
+
+.modal-content button:hover {
+    background-color: #D4D0C8;
+}
+
+.modal-content button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+/* Sidebar Panel Styles */
+.sidebar-panel {
+    position: fixed;
+    top: 0;
+    right: -320px;
+    width: 300px;
+    height: 100%;
+    background-color: #C0C0C0;
+    border-left: 2px solid #FFFFFF;
+    border-top: 2px solid #FFFFFF; /* Borde superior para efecto de panel */
+    border-bottom: 2px solid #808080; /* Borde inferior */
+    box-shadow: -4px 0 15px rgba(0, 0, 0, 0.1); /* Podría dejarse o quitarse */
+    z-index: 99;
+    transition: right 0.3s ease-out;
+    padding: 15px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    border-top-left-radius: 8px; /* Redondeado */
+    border-bottom-left-radius: 8px; /* Redondeado */
+}
+
+.sidebar-panel.open {
+    right: 0;
+}
+
+.sidebar-panel .panel-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 15px; /* Menos margen */
+}
+
+.sidebar-panel .close-button {
+    font-size: 20px;
+    cursor: pointer;
+    color: #000000;
+    background-color: #C0C0C0;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 0 5px;
+    line-height: 1;
+    border-radius: 3px; /* Redondeado */
+}
+
+.sidebar-panel .close-button:hover {
+    color: #000000;
+    background-color: #D4D0C8;
+}
+.sidebar-panel .close-button:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+
+.sidebar-panel h3 {
+    color: #000000;
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 #FFFFFF;
+}
+
+#panel-horarios-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px; /* Espacio mínimo entre botones */
+    justify-content: center;
+}
+
+.sidebar-panel .btn-hora {
+    background-color: #C0C0C0;
+    color: #000000;
+    padding: 5px 10px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: none;
+    flex: 1 1 auto;
+    min-width: 80px;
+    max-width: calc(50% - 5px); /* Dos columnas, pero ajustado */
+    box-sizing: border-box;
+    border-radius: 5px; /* Redondeado */
+}
+
+.sidebar-panel .btn-hora:hover {
+    background-color: #D4D0C8;
+}
+
+.sidebar-panel .btn-hora:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #FFFFFF;
+    border-bottom: 2px solid #FFFFFF;
+    background-color: #A0A0A0;
+}
+
+/* --- NUEVOS ESTILOS PARA HORAS RESERVADAS Y PASADAS --- */
+.sidebar-panel .btn-hora-reservada {
+    background-color: #FF6347; /* Rojo tomate para ocupado */
+    color: #8B0000; /* Texto rojo oscuro */
+    cursor: not-allowed;
+    border-top: 2px solid #D4D0C8; /* Un efecto de hundido o menos contraste */
+    border-left: 2px solid #D4D0C8;
+    border-right: 2px solid #A0A0A0;
+    border-bottom: 2px solid #A0A0A0;
+    opacity: 0.8; /* Ligeramente transparente para indicar inactividad */
+}
+
+.sidebar-panel .btn-hora-reservada:hover {
+    background-color: #FF4500; /* Naranja rojizo para un hover sutil */
+    transform: none;
+}
+
+.sidebar-panel .btn-hora-pasada {
+    background-color: #D4D0C8; /* Gris similar a días pasados */
+    color: #A0A0A4; /* Texto gris claro */
+    cursor: not-allowed;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    opacity: 0.6; /* Más transparente para indicar que no es relevante */
+}
+
+.sidebar-panel .btn-hora-pasada:hover {
+    background-color: #D4D0C8; /* No cambia al pasar el ratón */
+    transform: none;
+}
+
+.sidebar-panel .btn-hora:disabled {
+    /* Ensure disabled state is handled by specific classes, not general .btn-hora:disabled */
+    /* This overrides the general disabled style if it conflicts with btn-hora-reservada/pasada */
+    background-color: inherit; /* Inherit the background from the specific class */
+    color: inherit; /* Inherit the color from the specific class */
+    border-color: inherit; /* Inherit border colors */
+    cursor: not-allowed;
+    opacity: 1; /* Reset opacity if general disabled rule sets it */
+}
+/* --- FIN DE NUEVOS ESTILOS --- */
+
+
+.sidebar-panel p {
+    text-align: center;
+    color: #000000;
+    font-style: normal;
+    margin-top: 15px;
+}
+
+/* Adjust main content when panel is open */
+body.panel-open #calendario-container {
+    margin-right: 320px;
+}
+body.panel-open .input-section,
+body.panel-open #info-tiempo,
+body.panel-open h1,
+body.panel-open p:last-child {
+    margin-right: 320px;
+}
+body.panel-open #calendario-container,
+body.panel-open .input-section,
+body.panel-open #info-tiempo,
+body.panel-open h1,
+body.panel-open p:last-child {
+    transition: margin-right 0.3s ease-out;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    body {
+        padding: 10px; /* Reducir padding en móviles */
+    }
+    h1 {
+        font-size: 1.8em;
+    }
+    .input-section {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px;
+    }
+    .input-section input,
+    .input-section select,
+    .input-section button {
+        width: 100%;
+        min-width: unset;
+    }
+    #calendario-container {
+        grid-template-columns: 1fr;
+        gap: 10px; /* Reducir aún más el gap */
+    }
+    .modal-content {
+        width: 90%;
+        margin: 5% auto; /* Subir más el modal en móviles */
+    }
+    .sidebar-panel {
+        width: 100%;
+        right: -100%;
+        bottom: -100%;
+        height: 50%;
+        border-top-left-radius: 8px; /* Redondeado en móvil */
+        border-top-right-radius: 8px; /* Redondeado en móvil */
+        border-left: none; /* Eliminar borde lateral en móvil */
+        border-top: 2px solid #FFFFFF; /* Solo borde superior */
+        border-right: 2px solid #808080;
+        border-bottom: 2px solid #808080;
+    }
+    .sidebar-panel.open {
+        right: 0;
+        bottom: 0;
+    }
+    body.panel-open #calendario-container,
+    body.panel-open .input-section,
+    body.panel-open #info-tiempo,
+    body.panel-open h1,
+    body.panel-open p:last-child {
+        margin-right: 0;
+    }
+}
+================================================================================
+
+
+--- Archivo: templates\admin.html ---
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Configuración de Reservas</title> {# Título de la pestaña también actualizado #}
+    <link rel="stylesheet" href="/static/admin-styles.css" />
+</head>
+<body>
+    <div class="container">
+        <h1>Configuración</h1> {# Título principal cambiado a solo "Configuración" #}
+
+        {% if mensaje %}
+        <div class="message">{{ mensaje }}</div>
+        {% endif %}
+
+        <form action="/reservas/{{ id_negocio }}/admin/config" method="post" id="admin-form">
+            {# El recuadro "Configuración General" ha sido eliminado #}
+            {# El campo max_calendarios ahora es oculto y lo maneja JS #}
+            <input type="hidden" id="max_calendarios" name="max_calendarios" value="{{ max_calendarios }}" />
+
+            <div id="calendarios-dinamicos">
+                {# Los calendarios serán añadidos dinámicamente aquí por JavaScript #}
+            </div>
+
+            <button type="button" id="add-calendar-button" class="add-calendar-button">
+                Agregar Calendario {# Emoji eliminado #}
+            </button>
+
+            <button type="submit">Guardar Configuración</button>
+        </form>
+    </div>
+
+    <div class="footer-button-container">
+        <a href="/reservas/{{ id_negocio }}" class="back-button">
+            Volver al Calendario de Reservas {# Emoji eliminado #}
+        </a>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const maxCalendariosInput = document.getElementById("max_calendarios");
+            const calendariosContainer = document.getElementById("calendarios-dinamicos");
+            const addCalendarButton = document.getElementById("add-calendar-button");
+            const diasSemanaNombres = {{ dias_semana_nombres | tojson }};
+            const defaultFechaMaxima = "{{ default_fecha_maxima }}";
+            const initialCalendarsConfig = {{ calendarios_config | tojson }};
+
+            let calendarCounter = 0; // Para llevar la cuenta de IDs únicos para nuevos calendarios
+
+            // Función para generar el HTML de un bloque de calendario
+            function generarCampoCalendario(index, calData = {}) {
+                // Usar calData proporcionado o valores por defecto
+                const horarioInicio = calData.horario_inicio !== undefined ? calData.horario_inicio : 9;
+                const horarioFin = calData.horario_fin !== undefined ? calData.horario_fin : 18;
+                const duracionTurnoMin = calData.duracion_turno_min !== undefined ? calData.duracion_turno_min : 30;
+                const diasHabiles = calData.dias_habiles !== undefined ? calData.dias_habiles : [0, 1, 2, 3, 4];
+                const fechaMaximaReserva = calData.fecha_maxima_reserva !== undefined && calData.fecha_maxima_reserva !== null ? calData.fecha_maxima_reserva : defaultFechaMaxima;
+                const nombreCalendario = calData.nombre !== undefined && calData.nombre !== null ? calData.nombre : `Nuevo Calendario`; // Nombre por defecto "Nuevo Calendario"
+
+                let checkboxesHtml = '';
+                diasSemanaNombres.forEach((nombre_dia, num_dia) => {
+                    const checked = diasHabiles.includes(num_dia) ? 'checked' : '';
+                    checkboxesHtml += `
+                        <label>
+                            <input type="checkbox" name="dias_habiles_${index}" value="${num_dia}" ${checked} />
+                            ${nombre_dia}
+                        </label>
+                    `;
+                });
+
+                return `
+                    <div class="form-section calendar-config" data-calendar-id="${index}">
+                        <button type="button" class="remove-calendar-button">&times;</button>
+                        <h3>Configuración Calendario <span class="calendar-number">${index}</span></h3>
+                        <div class="form-row">
+                            <div>
+                                <label for="nombre_calendario_${index}">Nombre del Calendario:</label>
+                                <input type="text" id="nombre_calendario_${index}" name="nombre_calendario_${index}" value="${nombreCalendario}" placeholder="Ej: Calendario de Citas" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="horario_inicio_${index}">Horario Inicio (horas):</label>
+                                <input type="number" id="horario_inicio_${index}" name="horario_inicio_${index}" value="${horarioInicio}" min="0" max="23" required />
+                            </div>
+                            <div>
+                                <label for="horario_fin_${index}">Horario Fin (horas):</label>
+                                <input type="number" id="horario_fin_${index}" name="horario_fin_${index}" value="${horarioFin}" min="0" max="23" required />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label for="duracion_turno_min_${index}">Duración del Turno (minutos):</label>
+                                <input type="number" id="duracion_turno_min_${index}" name="duracion_turno_min_${index}" value="${duracionTurnoMin}" min="5" required />
+                            </div>
+                            <div>
+                                <label for="fecha_maxima_reserva_${index}">Fecha Máxima de Reserva:</label>
+                                <input type="date" id="fecha_maxima_reserva_${index}" name="fecha_maxima_reserva_${index}" value="${fechaMaximaReserva}" />
+                            </div>
+                        </div>
+                        <label>Días Hábiles:</label>
+                        <div class="checkbox-group">
+                            ${checkboxesHtml}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Función para actualizar el campo oculto max_calendarios y re-numerar calendarios
+            function updateCalendarCount() {
+                const currentCalendars = calendariosContainer.children.length;
+                maxCalendariosInput.value = currentCalendars; // Actualiza el campo oculto
+
+                // Re-numerar los calendarios visibles y sus atributos
+                Array.from(calendariosContainer.children).forEach((calendarDiv, i) => {
+                    const newIndex = i + 1;
+                    calendarDiv.querySelector('.calendar-number').textContent = newIndex;
+                    // Actualizar nombres e IDs de los inputs para reflejar el nuevo índice
+                    calendarDiv.querySelectorAll('[name]').forEach(input => {
+                        const oldName = input.name;
+                        const newName = oldName.replace(/_\d+$/, `_${newIndex}`);
+                        input.name = newName;
+                    });
+                    calendarDiv.querySelectorAll('[id]').forEach(input => {
+                        const oldId = input.id;
+                        const newId = oldId.replace(/_\d+$/, `_${newIndex}`);
+                        input.id = newId;
+                    });
+                    calendarDiv.dataset.calendarId = newIndex; // Actualizar atributo de datos
+                });
+            }
+
+            // Población inicial de calendarios desde los datos del servidor
+            let initialMaxId = 0;
+            for (const key in initialCalendarsConfig) {
+                if (initialCalendarsConfig.hasOwnProperty(key)) {
+                    const calConfig = initialCalendarsConfig[key];
+                    // Asegurarse de que calendarCounter comience desde el ID más alto existente
+                    initialMaxId = Math.max(initialMaxId, parseInt(key));
+                    const newDiv = document.createElement("div");
+                    newDiv.innerHTML = generarCampoCalendario(parseInt(key), calConfig);
+                    calendariosContainer.appendChild(newDiv.firstElementChild);
+                }
+            }
+            calendarCounter = initialMaxId; // Establecer el contador al máximo ID encontrado
+
+            if (Object.keys(initialCalendarsConfig).length === 0) {
+                    // Si no hay calendarios iniciales, añadir uno por defecto
+                calendarCounter = 1;
+                const newDiv = document.createElement("div");
+                newDiv.innerHTML = generarCampoCalendario(calendarCounter);
+                calendariosContainer.appendChild(newDiv.firstElementChild);
+            }
+            updateCalendarCount(); // Actualización inicial del conteo y numeración
+
+            // Añadir nuevo calendario
+            addCalendarButton.addEventListener("click", () => {
+                calendarCounter++;
+                const newDiv = document.createElement("div");
+                newDiv.innerHTML = generarCampoCalendario(calendarCounter);
+                calendariosContainer.appendChild(newDiv.firstElementChild);
+                updateCalendarCount();
+            });
+
+            // Eliminar calendario (delegación de eventos)
+            calendariosContainer.addEventListener("click", (event) => {
+                if (event.target.classList.contains("remove-calendar-button")) {
+                    const calendarToRemove = event.target.closest(".calendar-config");
+                    if (calendarToRemove) {
+                        calendarToRemove.remove();
+                        updateCalendarCount();
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+================================================================================
+
+
+--- Archivo: templates\index.html ---
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Sistema de Reservas</title>
+    <link rel="stylesheet" href="/static/index-styles.css" />
+    <script src="/static/app.js" defer></script>
+    <style>
+        /* Aquí podrías tener estilos CSS específicos que no quieras en style.css */
+    </style>
+</head>
+<body>
+    <h1>Sistema de Reservas</h1>
+
+    <div id="info-tiempo" style="text-align: center; margin-bottom: 20px;">
+        <p id="hora-servidor">🖥️ Hora servidor (America/Montevideo): Cargando...</p>
+        <p id="hora-navegador">📍 Hora navegador (America/Montevideo): Cargando...</p>
+    </div>
+
+    <div class="input-section">
+        {% if not id_negocio %}
+        <label for="negocio">ID de Negocio:</label>
+        <input type="text" id="negocio" placeholder="Ej: mi_negocio" value="{{ id_negocio if id_negocio else '' }}" required />
+        {% else %}
+        <input type="hidden" id="negocio" value="{{ id_negocio }}" />
+        {% endif %}
+
+        <label for="calendario">Seleccionar Calendario:</label>
+        <select id="calendario">
+            {% if calendarios_config %}
+                {% for id, config in calendarios_config.items() %}
+                    <option value="{{ id }}" {% if loop.first %}selected{% endif %}>{{ config.nombre }} (ID: {{ id }})</option>
+                {% endfor %}
+            {% else %}
+                 <option value="" disabled selected>Seleccione un calendario</option>
+            {% endif %}
+        </select>
+
+        <button id="cargar">Cargar Calendario</button>
+    </div>
+
+    <div id="calendario-container">
+    </div>
+
+    <p style="text-align: center; margin-top: 20px;">
+        <a href="/reservas/{{ id_negocio if id_negocio else 'ID_NEGOCIO_AQUI' }}/admin" target="_blank">
+            Ir a Panel de Administración (abrir en nueva pestaña)
+        </a>
+    </p>
+
+    <div id="toast" class="toast"></div>
+
+    <div id="modal-reserva" class="modal">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Confirmar Reserva</h2>
+            <p>Fecha: <span id="reserva-fecha"></span></p>
+            <p>Hora: <span id="reserva-hora"></span></p>
+            <label for="nombre-usuario">Tu Nombre:</label>
+            <input type="text" id="nombre-usuario" required />
+            <button id="confirmar-reserva">Confirmar Reserva</button>
+        </div>
+    </div>
+
+    <div id="detalle-dia-panel" class="sidebar-panel">
+        <div class="panel-header">
+            <span class="close-button">&times;</span>
+        </div>
+        <div class="panel-content">
+            </div>
+    </div>
+</body>
+</html>
+================================================================================
